@@ -1,0 +1,1 @@
+- [Expo artifact port detection](expo-port-detection.md) — platform only detects ports in the supported list; expo artifacts assigned port 25089 must be changed to 3000 (or another supported port) via verifyAndReplaceArtifactToml before first restart.

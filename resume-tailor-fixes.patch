@@ -1,0 +1,1255 @@
+diff --git a/artifacts/api-server/package.json b/artifacts/api-server/package.json
+index f2f05cb..54b0953 100644
+--- a/artifacts/api-server/package.json
++++ b/artifacts/api-server/package.json
+@@ -7,6 +7,7 @@
+     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
+     "build": "node ./build.mjs",
+     "start": "node --enable-source-maps ./dist/index.mjs",
++    "test": "vitest run",
+     "typecheck": "tsc -p tsconfig.json --noEmit"
+   },
+   "dependencies": {
+@@ -18,6 +19,7 @@
+     "cors": "^2.8.6",
+     "drizzle-orm": "catalog:",
+     "express": "^5.2.1",
++    "express-rate-limit": "^7.4.1",
+     "express-session": "^1.19.0",
+     "mammoth": "^1.12.0",
+     "multer": "^2.1.1",
+@@ -28,6 +30,7 @@
+     "stripe": "^22.2.0"
+   },
+   "devDependencies": {
++    "vitest": "^3.2.4",
+     "@types/bcryptjs": "^3.0.0",
+     "@types/connect-pg-simple": "^7.0.3",
+     "@types/cookie-parser": "^1.4.10",
+diff --git a/artifacts/api-server/src/app.ts b/artifacts/api-server/src/app.ts
+index c873b46..53a562e 100644
+--- a/artifacts/api-server/src/app.ts
++++ b/artifacts/api-server/src/app.ts
+@@ -6,9 +6,14 @@ import connectPgSimple from "connect-pg-simple";
+ import { pool } from "@workspace/db";
+ import router from "./routes";
+ import { logger } from "./lib/logger";
++import { generalLimiter, authLimiter, aiLimiter } from "./middlewares/rateLimit";
+ 
+ const app: Express = express();
+ 
++// Behind Replit's single reverse proxy — trust exactly one hop so the client
++// IP used for rate limiting is the real one, not the proxy's.
++app.set("trust proxy", 1);
++
+ app.use(
+   pinoHttp({
+     logger,
+@@ -85,6 +90,11 @@ app.use(
+   }),
+ );
+ 
++// Rate limiting: tight buckets on auth + AI, a loose backstop on everything.
++app.use("/api/auth", authLimiter);
++app.use("/api/ai", aiLimiter);
++app.use("/api", generalLimiter);
++
+ app.use("/api", router);
+ 
+ export default app;
+diff --git a/artifacts/api-server/src/lib/aiCredits.ts b/artifacts/api-server/src/lib/aiCredits.ts
+new file mode 100644
+index 0000000..6b14b56
+--- /dev/null
++++ b/artifacts/api-server/src/lib/aiCredits.ts
+@@ -0,0 +1,96 @@
++import { db, users } from "@workspace/db";
++import { and, eq, lt, sql } from "drizzle-orm";
++import {
++  STARTER_MONTHLY_AI_LIMIT,
++  CREDIT_WINDOW_MS,
++  creditLimitMessage,
++  decideCredit,
++} from "./creditPolicy";
++
++export { STARTER_MONTHLY_AI_LIMIT, decideCredit } from "./creditPolicy";
++
++export type ConsumeResult =
++  | { ok: true }
++  | { ok: false; status: number; message: string };
++
++/**
++ * Atomically charge one AI credit to a user, rolling the monthly window if it
++ * has elapsed. Returns a 429 result when the free-tier limit is exhausted.
++ */
++export async function consumeAiCredit(userId: string): Promise<ConsumeResult> {
++  const [user] = await db
++    .select()
++    .from(users)
++    .where(eq(users.id, userId))
++    .limit(1);
++
++  if (!user) return { ok: false, status: 401, message: "Not authenticated" };
++
++  const now = Date.now();
++  const decision = decideCredit(
++    {
++      plan: user.plan,
++      lifetimeAccess: user.lifetimeAccess,
++      aiCreditsUsed: user.aiCreditsUsed,
++      aiCreditsResetAt: user.aiCreditsResetAt,
++    },
++    now,
++  );
++
++  if (!decision.allowed) {
++    return { ok: false, status: 429, message: decision.reason };
++  }
++  if (decision.unlimited) return { ok: true };
++
++  // Roll the window first if it has expired, then charge atomically. The
++  // conditional `used < limit` guard keeps a race from overspending.
++  if (decision.windowReset) {
++    await db
++      .update(users)
++      .set({ aiCreditsUsed: 0, aiCreditsResetAt: new Date(decision.resetAt) })
++      .where(eq(users.id, user.id));
++  }
++
++  const charged = await db
++    .update(users)
++    .set({ aiCreditsUsed: sql`${users.aiCreditsUsed} + 1` })
++    .where(and(eq(users.id, user.id), lt(users.aiCreditsUsed, STARTER_MONTHLY_AI_LIMIT)))
++    .returning({ used: users.aiCreditsUsed });
++
++  if (charged.length === 0) {
++    return { ok: false, status: 429, message: creditLimitMessage() };
++  }
++
++  return { ok: true };
++}
++
++/** Read-only usage summary for surfacing remaining credits in the UI. */
++export async function getUsage(userId: string) {
++  const [user] = await db
++    .select()
++    .from(users)
++    .where(eq(users.id, userId))
++    .limit(1);
++
++  if (!user) return null;
++
++  const isPro =
++    user.plan === "pro" || user.plan === "lifetime" || user.lifetimeAccess;
++  if (isPro) {
++    return { unlimited: true as const, plan: user.plan };
++  }
++
++  const now = Date.now();
++  const resetAt = new Date(user.aiCreditsResetAt).getTime();
++  const windowExpired = !resetAt || Number.isNaN(resetAt) || now >= resetAt;
++  const used = windowExpired ? 0 : user.aiCreditsUsed;
++
++  return {
++    unlimited: false as const,
++    plan: user.plan,
++    limit: STARTER_MONTHLY_AI_LIMIT,
++    used,
++    remaining: Math.max(0, STARTER_MONTHLY_AI_LIMIT - used),
++    resetAt: windowExpired ? now + CREDIT_WINDOW_MS : resetAt,
++  };
++}
+diff --git a/artifacts/api-server/src/lib/creditPolicy.test.ts b/artifacts/api-server/src/lib/creditPolicy.test.ts
+new file mode 100644
+index 0000000..70a459a
+--- /dev/null
++++ b/artifacts/api-server/src/lib/creditPolicy.test.ts
+@@ -0,0 +1,66 @@
++import { describe, it, expect } from "vitest";
++import { decideCredit, CREDIT_WINDOW_MS } from "./creditPolicy";
++
++const NOW = 1_700_000_000_000; // fixed clock for deterministic tests
++
++describe("decideCredit", () => {
++  it("gives pro and lifetime accounts unlimited access", () => {
++    for (const plan of ["pro", "lifetime"]) {
++      const d = decideCredit(
++        { plan, lifetimeAccess: false, aiCreditsUsed: 999, aiCreditsResetAt: NOW + 1000 },
++        NOW,
++        3,
++      );
++      expect(d).toEqual({ allowed: true, unlimited: true });
++    }
++  });
++
++  it("treats lifetimeAccess=true as unlimited regardless of plan label", () => {
++    const d = decideCredit(
++      { plan: "starter", lifetimeAccess: true, aiCreditsUsed: 100, aiCreditsResetAt: NOW + 1000 },
++      NOW,
++      3,
++    );
++    expect(d).toEqual({ allowed: true, unlimited: true });
++  });
++
++  it("allows a starter user under the limit within an active window", () => {
++    const d = decideCredit(
++      { plan: "starter", lifetimeAccess: false, aiCreditsUsed: 1, aiCreditsResetAt: NOW + 1000 },
++      NOW,
++      3,
++    );
++    expect(d.allowed).toBe(true);
++    expect(d).toMatchObject({ unlimited: false, windowReset: false, resetAt: NOW + 1000 });
++  });
++
++  it("blocks a starter user who has hit the limit in an active window", () => {
++    const d = decideCredit(
++      { plan: "starter", lifetimeAccess: false, aiCreditsUsed: 3, aiCreditsResetAt: NOW + 1000 },
++      NOW,
++      3,
++    );
++    expect(d.allowed).toBe(false);
++    if (!d.allowed) expect(d.reason).toMatch(/Upgrade to Pro/);
++  });
++
++  it("rolls an expired window: usage resets and the request is allowed", () => {
++    const d = decideCredit(
++      { plan: "starter", lifetimeAccess: false, aiCreditsUsed: 3, aiCreditsResetAt: NOW - 1 },
++      NOW,
++      3,
++    );
++    expect(d.allowed).toBe(true);
++    expect(d).toMatchObject({ unlimited: false, windowReset: true, resetAt: NOW + CREDIT_WINDOW_MS });
++  });
++
++  it("treats a never-initialised reset timestamp as an expired window", () => {
++    const d = decideCredit(
++      { plan: "starter", lifetimeAccess: false, aiCreditsUsed: 5, aiCreditsResetAt: 0 },
++      NOW,
++      3,
++    );
++    expect(d.allowed).toBe(true);
++    if (d.allowed && !d.unlimited) expect(d.windowReset).toBe(true);
++  });
++});
+diff --git a/artifacts/api-server/src/lib/creditPolicy.ts b/artifacts/api-server/src/lib/creditPolicy.ts
+new file mode 100644
+index 0000000..ace931e
+--- /dev/null
++++ b/artifacts/api-server/src/lib/creditPolicy.ts
+@@ -0,0 +1,59 @@
++/**
++ * Pure, dependency-free AI-credit policy. Kept separate from aiCredits.ts (which
++ * touches the database) so it can be unit-tested without a DB connection.
++ */
++
++export const STARTER_MONTHLY_AI_LIMIT = Number(
++  process.env["STARTER_MONTHLY_AI_LIMIT"] ?? 3,
++);
++
++export const CREDIT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
++
++export interface CreditState {
++  plan: string;
++  lifetimeAccess: boolean;
++  aiCreditsUsed: number;
++  aiCreditsResetAt: Date | string | number;
++}
++
++export type CreditDecision =
++  | { allowed: true; unlimited: true }
++  | { allowed: true; unlimited: false; windowReset: boolean; resetAt: number }
++  | { allowed: false; reason: string };
++
++function limitReachedMessage(limit: number): string {
++  return `You've used all ${limit} free AI generations for this period. Upgrade to Pro for unlimited resume tailoring and cover letters.`;
++}
++
++export function creditLimitMessage(limit: number = STARTER_MONTHLY_AI_LIMIT): string {
++  return limitReachedMessage(limit);
++}
++
++/**
++ * Given a user's current credit state and the clock, decide whether one more
++ * generation is permitted. No I/O.
++ */
++export function decideCredit(
++  state: CreditState,
++  now: number,
++  limit: number = STARTER_MONTHLY_AI_LIMIT,
++): CreditDecision {
++  const isPro =
++    state.plan === "pro" || state.plan === "lifetime" || state.lifetimeAccess;
++  if (isPro) return { allowed: true, unlimited: true };
++
++  const resetAt = new Date(state.aiCreditsResetAt).getTime();
++  const windowExpired = !resetAt || Number.isNaN(resetAt) || now >= resetAt;
++  const used = windowExpired ? 0 : state.aiCreditsUsed;
++
++  if (used >= limit) {
++    return { allowed: false, reason: limitReachedMessage(limit) };
++  }
++
++  return {
++    allowed: true,
++    unlimited: false,
++    windowReset: windowExpired,
++    resetAt: windowExpired ? now + CREDIT_WINDOW_MS : resetAt,
++  };
++}
+diff --git a/artifacts/api-server/src/middlewares/auth.ts b/artifacts/api-server/src/middlewares/auth.ts
+new file mode 100644
+index 0000000..394e680
+--- /dev/null
++++ b/artifacts/api-server/src/middlewares/auth.ts
+@@ -0,0 +1,14 @@
++import type { Request, Response, NextFunction } from "express";
++
++/**
++ * Rejects the request with 401 unless an authenticated session exists.
++ * Shared by the resumes, stripe, and ai routers so the auth check lives
++ * in exactly one place.
++ */
++export function requireAuth(req: Request, res: Response, next: NextFunction): void {
++  if (!req.session.userId) {
++    res.status(401).json({ error: "Not authenticated" });
++    return;
++  }
++  next();
++}
+diff --git a/artifacts/api-server/src/middlewares/rateLimit.ts b/artifacts/api-server/src/middlewares/rateLimit.ts
+new file mode 100644
+index 0000000..0ed5ac1
+--- /dev/null
++++ b/artifacts/api-server/src/middlewares/rateLimit.ts
+@@ -0,0 +1,35 @@
++import rateLimit from "express-rate-limit";
++
++const FIFTEEN_MIN = 15 * 60 * 1000;
++
++/** Broad backstop for the whole API surface (Stripe webhooks exempted). */
++export const generalLimiter = rateLimit({
++  windowMs: FIFTEEN_MIN,
++  limit: 300,
++  standardHeaders: "draft-7",
++  legacyHeaders: false,
++  skip: (req) => req.originalUrl.startsWith("/api/stripe/webhook"),
++  message: { error: "Too many requests. Please slow down and try again shortly." },
++});
++
++/** Tight limit on auth endpoints to blunt credential brute-force. */
++export const authLimiter = rateLimit({
++  windowMs: FIFTEEN_MIN,
++  limit: 10,
++  standardHeaders: "draft-7",
++  legacyHeaders: false,
++  skipSuccessfulRequests: true,
++  message: { error: "Too many attempts. Please wait a few minutes and try again." },
++});
++
++/**
++ * Burst limit on the (expensive) AI endpoints. The per-plan credit system is
++ * the real quota; this just caps abusive bursts on top of it.
++ */
++export const aiLimiter = rateLimit({
++  windowMs: 60 * 1000,
++  limit: 10,
++  standardHeaders: "draft-7",
++  legacyHeaders: false,
++  message: { error: "You're generating too quickly. Please wait a moment and try again." },
++});
+diff --git a/artifacts/api-server/src/routes/ai.ts b/artifacts/api-server/src/routes/ai.ts
+index 4fc84c1..5b8ee26 100644
+--- a/artifacts/api-server/src/routes/ai.ts
++++ b/artifacts/api-server/src/routes/ai.ts
+@@ -3,9 +3,15 @@ import OpenAI from "openai";
+ import multer from "multer";
+ import pdfParse from "pdf-parse/lib/pdf-parse.js";
+ import mammoth from "mammoth";
++import { requireAuth } from "../middlewares/auth";
++import { consumeAiCredit, getUsage } from "../lib/aiCredits";
+ 
+ const router = Router();
+ 
++// Every AI endpoint requires an authenticated session. This is the fix for
++// the previously open, unmetered OpenAI proxy.
++router.use(requireAuth);
++
+ const openai = new OpenAI({
+   apiKey: process.env["OPENAI_API_KEY"],
+ });
+@@ -60,18 +66,30 @@ router.post("/ai/tailor", upload.single("resume"), async (req, res) => {
+       return;
+     }
+ 
++    const credit = await consumeAiCredit(req.session.userId!);
++    if (!credit.ok) {
++      res.status(credit.status).json({ error: credit.message, limitReached: credit.status === 429 });
++      return;
++    }
++
+     res.setHeader("Content-Type", "text/event-stream");
+     res.setHeader("Cache-Control", "no-cache");
+     res.setHeader("Connection", "keep-alive");
+ 
+-    const stream = await openai.chat.completions.create({
+-      model: "gpt-4o-mini",
+-      max_tokens: 2000,
+-      stream: true,
+-      messages: [
+-        {
+-          role: "system",
+-          content: `You are an expert resume writer and career coach. Your job is to tailor a user's resume to match a specific job description.
++    // Cancel the upstream OpenAI request if the client disconnects, so we stop
++    // paying for tokens the user will never see.
++    const controller = new AbortController();
++    res.on("close", () => controller.abort());
++
++    const stream = await openai.chat.completions.create(
++      {
++        model: "gpt-4o-mini",
++        max_tokens: 4096,
++        stream: true,
++        messages: [
++          {
++            role: "system",
++            content: `You are an expert resume writer and career coach. Your job is to tailor a user's resume to match a specific job description.
+ 
+ Rewrite the resume to:
+ 1. Highlight experience and skills that match the job requirements
+@@ -81,24 +99,31 @@ Rewrite the resume to:
+ 5. Maintain a professional, concise tone
+ 
+ Return ONLY the tailored resume text, formatted cleanly with clear section headers (e.g. SUMMARY, EXPERIENCE, EDUCATION, SKILLS). Do not include any commentary, preamble, or explanation.`,
+-        },
+-        {
+-          role: "user",
+-          content: `Here is my current resume:\n\n${resumeText}\n\n---\n\nHere is the job description I'm applying to:\n\n${jobDescription}\n\n---\n\nPlease tailor my resume for this specific role.`,
+-        },
+-      ],
+-    });
++          },
++          {
++            role: "user",
++            content: `Here is my current resume:\n\n${resumeText}\n\n---\n\nHere is the job description I'm applying to:\n\n${jobDescription}\n\n---\n\nPlease tailor my resume for this specific role.`,
++          },
++        ],
++      },
++      { signal: controller.signal },
++    );
+ 
+     for await (const chunk of stream) {
++      if (controller.signal.aborted || res.writableEnded) break;
+       const content = chunk.choices[0]?.delta?.content;
+       if (content) {
+         res.write(`data: ${JSON.stringify({ content })}\n\n`);
+       }
+     }
+ 
+-    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+-    res.end();
++    if (!res.writableEnded) {
++      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
++      res.end();
++    }
+   } catch (err: any) {
++    // Client disconnected / stream aborted — nothing left to send.
++    if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
+     req.log.error({ err }, "AI tailor error");
+     const userMessage =
+       err?.status === 429
+@@ -139,18 +164,28 @@ router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
+       return;
+     }
+ 
++    const credit = await consumeAiCredit(req.session.userId!);
++    if (!credit.ok) {
++      res.status(credit.status).json({ error: credit.message, limitReached: credit.status === 429 });
++      return;
++    }
++
+     res.setHeader("Content-Type", "text/event-stream");
+     res.setHeader("Cache-Control", "no-cache");
+     res.setHeader("Connection", "keep-alive");
+ 
+-    const stream = await openai.chat.completions.create({
+-      model: "gpt-4o-mini",
+-      max_tokens: 1000,
+-      stream: true,
+-      messages: [
+-        {
+-          role: "system",
+-          content: `You are an expert career coach who writes compelling cover letters. Write a professional, personalized cover letter based on the applicant's resume and the job description.
++    const controller = new AbortController();
++    res.on("close", () => controller.abort());
++
++    const stream = await openai.chat.completions.create(
++      {
++        model: "gpt-4o-mini",
++        max_tokens: 1500,
++        stream: true,
++        messages: [
++          {
++            role: "system",
++            content: `You are an expert career coach who writes compelling cover letters. Write a professional, personalized cover letter based on the applicant's resume and the job description.
+ 
+ The cover letter should:
+ 1. Open with a strong hook that shows genuine interest in the role and company
+@@ -161,24 +196,31 @@ The cover letter should:
+ 6. Be 3-4 paragraphs, professional but warm in tone
+ 
+ Return ONLY the cover letter body text (no address block, no date, no signature line). Start directly with "Dear Hiring Manager," and end after the closing paragraph. Do not include any commentary.`,
+-        },
+-        {
+-          role: "user",
+-          content: `Here is my resume:\n\n${resumeText}\n\n---\n\nHere is the job description:\n\n${jobDescription}\n\n---\n\nPlease write a tailored cover letter for this role.`,
+-        },
+-      ],
+-    });
++          },
++          {
++            role: "user",
++            content: `Here is my resume:\n\n${resumeText}\n\n---\n\nHere is the job description:\n\n${jobDescription}\n\n---\n\nPlease write a tailored cover letter for this role.`,
++          },
++        ],
++      },
++      { signal: controller.signal },
++    );
+ 
+     for await (const chunk of stream) {
++      if (controller.signal.aborted || res.writableEnded) break;
+       const content = chunk.choices[0]?.delta?.content;
+       if (content) {
+         res.write(`data: ${JSON.stringify({ content })}\n\n`);
+       }
+     }
+ 
+-    res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+-    res.end();
++    if (!res.writableEnded) {
++      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
++      res.end();
++    }
+   } catch (err: any) {
++    // Client disconnected / stream aborted — nothing left to send.
++    if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
+     req.log.error({ err }, "AI cover letter error");
+     const userMessage =
+       err?.status === 429
+@@ -236,4 +278,18 @@ router.post("/ai/extract-job-context", async (req, res) => {
+   }
+ });
+ 
++router.get("/ai/usage", async (req, res) => {
++  try {
++    const usage = await getUsage(req.session.userId!);
++    if (!usage) {
++      res.status(401).json({ error: "Not authenticated" });
++      return;
++    }
++    res.json(usage);
++  } catch (err) {
++    req.log.error({ err }, "AI usage error");
++    res.status(500).json({ error: "Internal server error" });
++  }
++});
++
+ export default router;
+diff --git a/artifacts/api-server/src/routes/resumes.ts b/artifacts/api-server/src/routes/resumes.ts
+index 28be80f..af2464e 100644
+--- a/artifacts/api-server/src/routes/resumes.ts
++++ b/artifacts/api-server/src/routes/resumes.ts
+@@ -1,17 +1,10 @@
+ import { Router } from "express";
+ import { db, users, resumes, saveResumeSchema } from "@workspace/db";
+ import { eq, count } from "drizzle-orm";
++import { requireAuth } from "../middlewares/auth";
+ 
+ const router = Router();
+ 
+-function requireAuth(req: any, res: any, next: any) {
+-  if (!req.session.userId) {
+-    res.status(401).json({ error: "Not authenticated" });
+-    return;
+-  }
+-  next();
+-}
+-
+ const STARTER_RESUME_LIMIT = 1;
+ 
+ router.get("/resumes", requireAuth, async (req, res) => {
+diff --git a/artifacts/api-server/src/routes/routes.ts b/artifacts/api-server/src/routes/routes.ts
+deleted file mode 100644
+index 6c4f7de..0000000
+--- a/artifacts/api-server/src/routes/routes.ts
++++ /dev/null
+@@ -1,16 +0,0 @@
+-import type { Express } from "express";
+-import { createServer, type Server } from "http";
+-import { storage } from "../storage";
+-
+-export async function registerRoutes(
+-  httpServer: Server,
+-  app: Express
+-): Promise<Server> {
+-  // put application routes here
+-  // prefix all routes with /api
+-
+-  // use storage to perform CRUD operations on the storage interface
+-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+-
+-  return httpServer;
+-}
+diff --git a/artifacts/api-server/src/routes/stripe.ts b/artifacts/api-server/src/routes/stripe.ts
+index 8199e71..ed200ca 100644
+--- a/artifacts/api-server/src/routes/stripe.ts
++++ b/artifacts/api-server/src/routes/stripe.ts
+@@ -1,19 +1,12 @@
+-import { Router, type Request } from "express";
++import { Router } from "express";
+ import { db, users } from "@workspace/db";
+ import { eq } from "drizzle-orm";
+ import { getUncachableStripeClient, getStripeWebhookSecret } from "../stripeClient";
++import { requireAuth } from "../middlewares/auth";
+ import type Stripe from "stripe";
+ 
+ const router = Router();
+ 
+-function requireAuth(req: Request, res: any, next: any) {
+-  if (!req.session.userId) {
+-    res.status(401).json({ error: "Not authenticated" });
+-    return;
+-  }
+-  next();
+-}
+-
+ router.post("/stripe/create-checkout", requireAuth, async (req, res) => {
+   const { plan } = req.body as { plan: "pro" | "lifetime" };
+   if (!plan || !["pro", "lifetime"].includes(plan)) {
+diff --git a/artifacts/api-server/src/static.ts b/artifacts/api-server/src/static.ts
+deleted file mode 100644
+index f5071cc..0000000
+--- a/artifacts/api-server/src/static.ts
++++ /dev/null
+@@ -1,19 +0,0 @@
+-import express, { type Express } from "express";
+-import fs from "fs";
+-import path from "path";
+-
+-export function serveStatic(app: Express) {
+-  const distPath = path.resolve(__dirname, "public");
+-  if (!fs.existsSync(distPath)) {
+-    throw new Error(
+-      `Could not find the build directory: ${distPath}, make sure to build the client first`,
+-    );
+-  }
+-
+-  app.use(express.static(distPath));
+-
+-  // fall through to index.html if the file doesn't exist
+-  app.use("*", (_req, res) => {
+-    res.sendFile(path.resolve(distPath, "index.html"));
+-  });
+-}
+diff --git a/artifacts/api-server/src/storage.ts b/artifacts/api-server/src/storage.ts
+deleted file mode 100644
+index d74dd50..0000000
+--- a/artifacts/api-server/src/storage.ts
++++ /dev/null
+@@ -1,43 +0,0 @@
+-import { type User, type InsertUser } from "@workspace/db";
+-
+-export interface IStorage {
+-  getUser(id: string): Promise<User | undefined>;
+-  getUserByEmail(email: string): Promise<User | undefined>;
+-  createUser(user: InsertUser): Promise<User>;
+-}
+-
+-export class MemStorage implements IStorage {
+-  private users: Map<string, User>;
+-
+-  constructor() {
+-    this.users = new Map();
+-  }
+-
+-  async getUser(id: string): Promise<User | undefined> {
+-    return this.users.get(id);
+-  }
+-
+-  async getUserByEmail(email: string): Promise<User | undefined> {
+-    return Array.from(this.users.values()).find(
+-      (user) => user.email === email,
+-    );
+-  }
+-
+-  async createUser(insertUser: InsertUser): Promise<User> {
+-    const user: User = {
+-      ...insertUser,
+-      id: crypto.randomUUID(),
+-      name: null,
+-      phone: null,
+-      plan: "starter",
+-      stripeCustomerId: null,
+-      stripeSubscriptionId: null,
+-      lifetimeAccess: false,
+-      createdAt: new Date(),
+-    };
+-    this.users.set(user.id, user);
+-    return user;
+-  }
+-}
+-
+-export const storage = new MemStorage();
+diff --git a/artifacts/career-craft-mobile/app/(tabs)/cover-letter.tsx b/artifacts/career-craft-mobile/app/(tabs)/cover-letter.tsx
+index debba29..91013c9 100644
+--- a/artifacts/career-craft-mobile/app/(tabs)/cover-letter.tsx
++++ b/artifacts/career-craft-mobile/app/(tabs)/cover-letter.tsx
+@@ -67,6 +67,7 @@ export default function CoverLetterScreen() {
+   const [copied, setCopied] = useState(false);
+ 
+   const abortRef = useRef<boolean>(false);
++  const controllerRef = useRef<AbortController | null>(null);
+   const pendingRef = useRef<string>("");
+   const flushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+ 
+@@ -98,6 +99,8 @@ export default function CoverLetterScreen() {
+       if (flushIntervalRef.current !== null) {
+         clearInterval(flushIntervalRef.current);
+       }
++      // Cancel any in-flight stream so the server stops spending OpenAI tokens.
++      controllerRef.current?.abort();
+     };
+   }, []);
+ 
+@@ -192,6 +195,8 @@ export default function CoverLetterScreen() {
+     setErrorMsg("");
+     setCopied(false);
+     abortRef.current = false;
++    const controller = new AbortController();
++    controllerRef.current = controller;
+     pendingRef.current = "";
+     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+ 
+@@ -217,6 +222,7 @@ export default function CoverLetterScreen() {
+           method: "POST",
+           headers,
+           body: formData,
++          signal: controller.signal,
+         });
+       } else {
+         const headers: Record<string, string> = {
+@@ -232,6 +238,7 @@ export default function CoverLetterScreen() {
+             resumeText: textForAi,
+             jobDescription: jobDescription.trim(),
+           }),
++          signal: controller.signal,
+         });
+       }
+       startFlushInterval();
+@@ -285,6 +292,10 @@ export default function CoverLetterScreen() {
+       }
+     } catch (e: unknown) {
+       stopFlushInterval();
++      // A user-initiated cancel (Start Over / leaving the screen) is not an error.
++      if (abortRef.current || controller.signal.aborted || (e instanceof Error && e.name === "AbortError")) {
++        return;
++      }
+       const msg = e instanceof Error ? e.message : "Something went wrong";
+       setErrorMsg(msg);
+       setPhase("error");
+@@ -333,6 +344,7 @@ export default function CoverLetterScreen() {
+ 
+   function handleReset() {
+     abortRef.current = true;
++    controllerRef.current?.abort();
+     stopFlushInterval();
+     pendingRef.current = "";
+     setPhase("idle");
+diff --git a/artifacts/career-craft-mobile/app/(tabs)/index.tsx b/artifacts/career-craft-mobile/app/(tabs)/index.tsx
+index 16fb21f..206caf5 100644
+--- a/artifacts/career-craft-mobile/app/(tabs)/index.tsx
++++ b/artifacts/career-craft-mobile/app/(tabs)/index.tsx
+@@ -81,6 +81,7 @@ export default function TailorScreen() {
+   const [saving, setSaving] = useState(false);
+ 
+   const abortRef = useRef<boolean>(false);
++  const controllerRef = useRef<AbortController | null>(null);
+   const pendingRef = useRef<string>("");
+   const flushIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+ 
+@@ -112,6 +113,8 @@ export default function TailorScreen() {
+       if (flushIntervalRef.current !== null) {
+         clearInterval(flushIntervalRef.current);
+       }
++      // Cancel any in-flight stream so the server stops spending OpenAI tokens.
++      controllerRef.current?.abort();
+     };
+   }, []);
+ 
+@@ -209,6 +212,8 @@ export default function TailorScreen() {
+     setOutput("");
+     setErrorMsg("");
+     abortRef.current = false;
++    const controller = new AbortController();
++    controllerRef.current = controller;
+     pendingRef.current = "";
+     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+ 
+@@ -234,6 +239,7 @@ export default function TailorScreen() {
+           method: "POST",
+           headers,
+           body: formData,
++          signal: controller.signal,
+         });
+ 
+         setPhase("streaming");
+@@ -249,6 +255,7 @@ export default function TailorScreen() {
+           method: "POST",
+           headers,
+           body: JSON.stringify({ resumeText: textForAi, jobDescription: jobDescription.trim() }),
++          signal: controller.signal,
+         });
+         startFlushInterval();
+       }
+@@ -298,6 +305,10 @@ export default function TailorScreen() {
+       }
+     } catch (e: unknown) {
+       stopFlushInterval();
++      // A user-initiated cancel (Start Over / leaving the screen) is not an error.
++      if (abortRef.current || controller.signal.aborted || (e instanceof Error && e.name === "AbortError")) {
++        return;
++      }
+       const msg = e instanceof Error ? e.message : "Something went wrong";
+       setErrorMsg(msg);
+       setPhase("error");
+@@ -334,6 +345,7 @@ export default function TailorScreen() {
+ 
+   function handleReset() {
+     abortRef.current = true;
++    controllerRef.current?.abort();
+     stopFlushInterval();
+     pendingRef.current = "";
+     setPhase("idle");
+diff --git a/artifacts/career-craft-mobile/context/AuthContext.tsx b/artifacts/career-craft-mobile/context/AuthContext.tsx
+index 5d92f84..1efdaa1 100644
+--- a/artifacts/career-craft-mobile/context/AuthContext.tsx
++++ b/artifacts/career-craft-mobile/context/AuthContext.tsx
+@@ -1,4 +1,6 @@
+ import AsyncStorage from "@react-native-async-storage/async-storage";
++import * as SecureStore from "expo-secure-store";
++import { Platform } from "react-native";
+ import React, {
+   createContext,
+   useCallback,
+@@ -27,7 +29,27 @@ interface AuthContextType {
+ const AuthContext = createContext<AuthContextType | null>(null);
+ 
+ const USER_KEY = "@career_craft_user";
+-const COOKIE_KEY = "@career_craft_cookie";
++// SecureStore keys must be alphanumeric + ".", "-", "_" (no "@").
++const COOKIE_KEY = "career_craft_cookie";
++
++// The session cookie is a credential, so keep it in the OS keychain
++// (expo-secure-store) on native. SecureStore isn't available on web, so fall
++// back to AsyncStorage there.
++async function setCookieValue(value: string): Promise<void> {
++  if (Platform.OS === "web") {
++    await AsyncStorage.setItem(COOKIE_KEY, value);
++  } else {
++    await SecureStore.setItemAsync(COOKIE_KEY, value);
++  }
++}
++
++async function clearCookieValue(): Promise<void> {
++  if (Platform.OS === "web") {
++    await AsyncStorage.removeItem(COOKIE_KEY);
++  } else {
++    await SecureStore.deleteItemAsync(COOKIE_KEY);
++  }
++}
+ 
+ export function getApiBase(): string {
+   const domain = process.env["EXPO_PUBLIC_DOMAIN"];
+@@ -35,7 +57,10 @@ export function getApiBase(): string {
+ }
+ 
+ export async function getStoredCookie(): Promise<string | null> {
+-  return AsyncStorage.getItem(COOKIE_KEY);
++  if (Platform.OS === "web") {
++    return AsyncStorage.getItem(COOKIE_KEY);
++  }
++  return SecureStore.getItemAsync(COOKIE_KEY);
+ }
+ 
+ export async function apiFetch(
+@@ -81,7 +106,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
+         await AsyncStorage.setItem(USER_KEY, JSON.stringify(data));
+       } else {
+         setUser(null);
+-        await AsyncStorage.multiRemove([USER_KEY, COOKIE_KEY]);
++        await AsyncStorage.removeItem(USER_KEY);
++        await clearCookieValue();
+       }
+     } catch {
+       setUser(null);
+@@ -113,7 +139,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
+     }
+     const cookie = extractCookie(res);
+     if (cookie) {
+-      await AsyncStorage.setItem(COOKIE_KEY, cookie);
++      await setCookieValue(cookie);
+     }
+     const data = (await res.json()) as User;
+     setUser(data);
+@@ -131,7 +157,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
+     }
+     const cookie = extractCookie(res);
+     if (cookie) {
+-      await AsyncStorage.setItem(COOKIE_KEY, cookie);
++      await setCookieValue(cookie);
+     }
+     const data = (await res.json()) as User;
+     setUser(data);
+@@ -143,7 +169,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
+       await apiFetch("/api/auth/logout", { method: "POST" });
+     } catch {}
+     setUser(null);
+-    await AsyncStorage.multiRemove([USER_KEY, COOKIE_KEY]);
++    await AsyncStorage.removeItem(USER_KEY);
++    await clearCookieValue();
+   }, []);
+ 
+   return (
+diff --git a/artifacts/career-craft-mobile/package.json b/artifacts/career-craft-mobile/package.json
+index 098a6d0..5cc8b07 100644
+--- a/artifacts/career-craft-mobile/package.json
++++ b/artifacts/career-craft-mobile/package.json
+@@ -59,6 +59,7 @@
+     "expo-clipboard": "^8.0.8",
+     "expo-document-picker": "^56.0.4",
+     "expo-file-system": "^56.0.7",
++    "expo-secure-store": "~15.0.7",
+     "expo-sharing": "^56.0.16"
+   }
+ }
+diff --git a/artifacts/resume-builder/src/pages/CoverLetter.tsx b/artifacts/resume-builder/src/pages/CoverLetter.tsx
+index b511d68..b874b77 100644
+--- a/artifacts/resume-builder/src/pages/CoverLetter.tsx
++++ b/artifacts/resume-builder/src/pages/CoverLetter.tsx
+@@ -1,5 +1,6 @@
+ import Layout from "@/components/Layout";
+-import { useState } from "react";
++import { useState, useRef, useEffect } from "react";
++import { useLocation } from "wouter";
+ import { ResumeInput, ResumeInputValue } from "@/components/ResumeInput";
+ import { JobPostingInput } from "@/components/JobPostingInput";
+ import { Button } from "@/components/ui/button";
+@@ -14,12 +15,14 @@ import { useAuth } from "@/lib/auth";
+ async function streamAIRequest(
+   url: string,
+   body: FormData,
+-  onChunk: (text: string) => void
++  onChunk: (text: string) => void,
++  signal?: AbortSignal
+ ): Promise<void> {
+   const res = await fetch(url, {
+     method: "POST",
+     credentials: "include",
+     body,
++    signal,
+   });
+ 
+   if (!res.ok) {
+@@ -73,11 +76,21 @@ export default function CoverLetter() {
+   const [coverLetterText, setCoverLetterText] = useState("");
+   const [jobContext, setJobContext] = useState<JobContext | null>(null);
+   const { toast } = useToast();
+-  const { user } = useAuth();
++  const { user, loading: authLoading } = useAuth();
++  const [, navigate] = useLocation();
++  const abortRef = useRef<AbortController | null>(null);
+   const contactInfo = user
+     ? { name: user.name ?? undefined, email: user.email, phone: user.phone ?? undefined }
+     : undefined;
+ 
++  // The AI endpoints require a session. Send unauthenticated visitors to log in.
++  useEffect(() => {
++    if (!authLoading && !user) navigate("/login");
++  }, [authLoading, user, navigate]);
++
++  // Cancel any in-flight stream when leaving the page.
++  useEffect(() => () => abortRef.current?.abort(), []);
++
+   const hasResume = resumeInput !== null && (
+     resumeInput.mode === "file" || resumeInput.text.trim().length > 0
+   );
+@@ -94,6 +107,9 @@ export default function CoverLetter() {
+       }
+       formData.append("jobDescription", jobDescription);
+ 
++      const controller = new AbortController();
++      abortRef.current = controller;
++
+       let result = "";
+ 
+       await streamAIRequest(
+@@ -102,7 +118,8 @@ export default function CoverLetter() {
+         (chunk) => {
+           result += chunk;
+           setCoverLetterText(result);
+-        }
++        },
++        controller.signal
+       );
+ 
+       return result;
+diff --git a/artifacts/resume-builder/src/pages/Home.tsx b/artifacts/resume-builder/src/pages/Home.tsx
+index 51a8aa1..50b6a05 100644
+--- a/artifacts/resume-builder/src/pages/Home.tsx
++++ b/artifacts/resume-builder/src/pages/Home.tsx
+@@ -125,13 +125,8 @@ export default function Home() {
+                   <Target className="w-6 h-6" />
+                 </div>
+                 <div>
+-                  <p className="font-semibold text-sm text-white">ATS Match Rate</p>
+-                  <div className="flex items-center gap-2 mt-1">
+-                    <div className="h-2 w-32 bg-muted/30 rounded-full overflow-hidden">
+-                      <div className="h-full bg-primary w-[92%]" />
+-                    </div>
+-                    <span className="text-xs font-bold text-primary">92%</span>
+-                  </div>
++                  <p className="font-semibold text-sm text-white">Keyword-matched to the job</p>
++                  <p className="text-xs text-white/70 mt-1">Your experience, aligned to what the posting asks for.</p>
+                 </div>
+               </div>
+             </div>
+@@ -335,32 +330,23 @@ export default function Home() {
+           </div>
+         </div>
+ 
+-        {/* Success Stories */}
++        {/* Why It Works */}
+         <div className="py-16">
+           <div className="text-center mb-12">
+-            <h2 className="text-3xl font-display font-bold mb-4">Success Stories</h2>
+-            <p className="text-muted-foreground max-w-2xl mx-auto">See how Career Craft has helped professionals land their dream roles.</p>
++            <h2 className="text-3xl font-display font-bold mb-4">Why It Works</h2>
++            <p className="text-muted-foreground max-w-2xl mx-auto">A focused workflow that turns a generic resume into a role-specific application.</p>
+           </div>
+           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+             {[
+-              { quote: "I was applying for months with no response. After tailoring my resume with Career Craft, I landed 3 interviews in my first week.", name: "Sarah J.", role: "Product Manager at TechFlow" },
+-              { quote: "The ATS optimization is incredible. It highlighted skills I didn't even realize were crucial for the roles I wanted.", name: "David M.", role: "Senior Developer" },
+-              { quote: "Writing cover letters used to take me hours. Now I generate highly specific, compelling letters in seconds.", name: "Elena R.", role: "Marketing Director" },
+-            ].map((testimonial, i) => (
++              { title: "Matches the posting", body: "The AI reads the job description and surfaces the experience and keywords that role actually calls for." },
++              { title: "Keeps it truthful", body: "It reorders and rephrases what's already on your resume — it never invents experience you don't have." },
++              { title: "Saves real time", body: "Tailor a resume or draft a cover letter in minutes, then export a clean DOCX or PDF ready to send." },
++            ].map((item, i) => (
+               <Card key={i} className="bg-card border-border/50">
+                 <CardContent className="pt-6">
+-                  <div className="flex gap-1 mb-4 text-primary">
+-                    {[1, 2, 3, 4, 5].map((star) => (
+-                      <svg key={star} className="w-4 h-4 fill-current" viewBox="0 0 20 20">
+-                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+-                      </svg>
+-                    ))}
+-                  </div>
+-                  <p className="text-muted-foreground mb-6 italic">"{testimonial.quote}"</p>
+-                  <div>
+-                    <p className="font-semibold text-foreground">{testimonial.name}</p>
+-                    <p className="text-sm text-primary">{testimonial.role}</p>
+-                  </div>
++                  <CheckCircle2 className="w-8 h-8 text-primary mb-4" />
++                  <p className="font-semibold text-foreground mb-2">{item.title}</p>
++                  <p className="text-muted-foreground">{item.body}</p>
+                 </CardContent>
+               </Card>
+             ))}
+@@ -372,7 +358,7 @@ export default function Home() {
+           <div className="absolute -top-24 -right-24 w-48 h-48 bg-primary/20 rounded-full blur-3xl" />
+           <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-secondary/20 rounded-full blur-3xl" />
+           <h2 className="text-3xl md:text-4xl font-display font-bold mb-4 relative z-10">Ready to upgrade your career?</h2>
+-          <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto relative z-10">Join thousands of professionals who have successfully navigated the modern job market with our AI tools.</p>
++          <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto relative z-10">Tailor your resume to each role in minutes — not hours — and apply with confidence.</p>
+           <Link href="/tailor">
+             <Button size="lg" className="h-14 px-8 text-lg gap-2 shadow-lg shadow-primary/20 relative z-10 text-primary-foreground">
+               <Sparkles className="w-5 h-5" />
+diff --git a/artifacts/resume-builder/src/pages/Tailor.tsx b/artifacts/resume-builder/src/pages/Tailor.tsx
+index 9ea3046..11cb30f 100644
+--- a/artifacts/resume-builder/src/pages/Tailor.tsx
++++ b/artifacts/resume-builder/src/pages/Tailor.tsx
+@@ -1,5 +1,6 @@
+ import Layout from "@/components/Layout";
+-import { useState, useRef } from "react"; // useRef kept for future abort support
++import { useState, useRef, useEffect } from "react";
++import { useLocation } from "wouter";
+ import { ResumeInput, ResumeInputValue } from "@/components/ResumeInput";
+ import { JobPostingInput } from "@/components/JobPostingInput";
+ import { Button } from "@/components/ui/button";
+@@ -9,16 +10,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
+ import { useMutation } from "@tanstack/react-query";
+ import { downloadResumeDocx, downloadResumePdf, buildFilename } from "@/lib/docx-export";
+ import { DownloadDropdown } from "@/components/DownloadDropdown";
++import { useAuth } from "@/lib/auth";
+ 
+ async function streamAIRequest(
+   url: string,
+   body: FormData,
+-  onChunk: (text: string) => void
++  onChunk: (text: string) => void,
++  signal?: AbortSignal
+ ): Promise<void> {
+   const res = await fetch(url, {
+     method: "POST",
+     credentials: "include",
+     body,
++    signal,
+   });
+ 
+   if (!res.ok) {
+@@ -72,8 +76,19 @@ export default function Tailor() {
+   const [tailoredText, setTailoredText] = useState("");
+   const [jobContext, setJobContext] = useState<JobContext | null>(null);
+   const { toast } = useToast();
++  const { user, loading: authLoading } = useAuth();
++  const [, navigate] = useLocation();
+   const abortRef = useRef<AbortController | null>(null);
+ 
++  // The AI endpoints require a session. Send unauthenticated visitors to log in.
++  useEffect(() => {
++    if (!authLoading && !user) navigate("/login");
++  }, [authLoading, user, navigate]);
++
++  // Cancel any in-flight stream when leaving the page so the server stops
++  // consuming OpenAI tokens.
++  useEffect(() => () => abortRef.current?.abort(), []);
++
+   const hasResume = resumeInput !== null && (
+     resumeInput.mode === "file" || resumeInput.text.trim().length > 0
+   );
+@@ -90,6 +105,9 @@ export default function Tailor() {
+       }
+       formData.append("jobDescription", jobDescription);
+ 
++      const controller = new AbortController();
++      abortRef.current = controller;
++
+       let result = "";
+ 
+       await streamAIRequest(
+@@ -98,7 +116,8 @@ export default function Tailor() {
+         (chunk) => {
+           result += chunk;
+           setTailoredText(result);
+-        }
++        },
++        controller.signal
+       );
+ 
+       return result;
+diff --git a/lib/db/src/schema/schema.ts b/lib/db/src/schema/schema.ts
+index 4161635..40aa48e 100644
+--- a/lib/db/src/schema/schema.ts
++++ b/lib/db/src/schema/schema.ts
+@@ -13,6 +13,10 @@ export const users = pgTable("users", {
+   stripeCustomerId: text("stripe_customer_id"),
+   stripeSubscriptionId: text("stripe_subscription_id"),
+   lifetimeAccess: boolean("lifetime_access").notNull().default(false),
++  // Monthly AI-generation usage for metering the free (starter) tier.
++  // Reset lazily whenever the current window (aiCreditsResetAt) has elapsed.
++  aiCreditsUsed: integer("ai_credits_used").notNull().default(0),
++  aiCreditsResetAt: timestamp("ai_credits_reset_at").notNull().defaultNow(),
+   createdAt: timestamp("created_at").notNull().defaultNow(),
+ });
+ 
+diff --git a/replit.md b/replit.md
+index 8e01bfc..eba2c68 100644
+--- a/replit.md
++++ b/replit.md
+@@ -1,44 +1,70 @@
+-# [Project name]
++# Career Craft
+ 
+-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
++AI-powered resume tailoring: a user pastes or uploads a resume plus a job description, and the app rewrites the resume (and can draft a matching cover letter) to align with that specific posting. Delivered as a web app, a mobile app, and a shared API, with Stripe-based plans.
+ 
+ ## Run & Operate
+ 
+-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
++- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080, serves `/api/*`)
++- `pnpm --filter @workspace/resume-builder run dev` — run the web app (Vite, port 20047)
++- `pnpm --filter @workspace/career-craft-mobile run dev` — run the Expo mobile app
++- `pnpm --filter @workspace/api-server test` — run API unit tests (vitest)
+ - `pnpm run typecheck` — full typecheck across all packages
+ - `pnpm run build` — typecheck + build all packages
+-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
+ - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
+-- Required env: `DATABASE_URL` — Postgres connection string
++- `pnpm --filter scripts run ...` — Stripe product seeding (`seed-products`)
++- Required env: `DATABASE_URL`, `SESSION_SECRET`, `OPENAI_API_KEY`, `REPLIT_DOMAINS`,
++  `STRIPE_PRO_PRICE_ID`, `STRIPE_LIFETIME_PRICE_ID` (+ Stripe secret/webhook secret via the Replit Stripe integration).
++- Optional env: `STARTER_MONTHLY_AI_LIMIT` (free-tier AI generations per 30-day window; default 3).
+ 
+ ## Stack
+ 
+ - pnpm workspaces, Node.js 24, TypeScript 5.9
+-- API: Express 5
++- API: Express 5, sessions in Postgres (`connect-pg-simple`), bcrypt auth, pino logging, `express-rate-limit`
++- Web: React 19 + Vite + Tailwind v4 + wouter + TanStack Query
++- Mobile: Expo (expo-router), React Native 0.81
+ - DB: PostgreSQL + Drizzle ORM
+-- Validation: Zod (`zod/v4`), `drizzle-zod`
+-- API codegen: Orval (from OpenAPI spec)
+-- Build: esbuild (CJS bundle)
++- AI: OpenAI `gpt-4o-mini`, streamed to clients over Server-Sent Events
++- Payments: Stripe (Pro subscription + one-time Lifetime)
++- API codegen: Orval (from OpenAPI spec); validation with Zod + drizzle-zod
++- Build: esbuild (API → CJS/MJS bundle)
+ 
+ ## Where things live
+ 
+-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
++- DB schema (source of truth): `lib/db/src/schema/schema.ts`
++- API routes: `artifacts/api-server/src/routes/` (`auth`, `resumes`, `ai`, `stripe`, `health`)
++- Shared API middleware: `artifacts/api-server/src/middlewares/` (`auth`, `rateLimit`)
++- AI metering policy: `artifacts/api-server/src/lib/creditPolicy.ts` (pure) + `aiCredits.ts` (DB)
++- Web pages: `artifacts/resume-builder/src/pages/` (`Tailor`, `CoverLetter`, `Builder`, `MyResumes`, `Home`, `Login`)
++- Web auth/billing client: `artifacts/resume-builder/src/lib/auth.tsx`
++- Doc export (DOCX/PDF, client-side): `artifacts/resume-builder/src/lib/docx-export.ts`
++- Mobile screens: `artifacts/career-craft-mobile/app/(tabs)/`; auth/session: `context/AuthContext.tsx`
++- API contract: `lib/api-spec/openapi.yaml` → generates `lib/api-zod` and `lib/api-client-react`
+ 
+ ## Architecture decisions
+ 
+-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
++- One Express API serves both the web SPA and the mobile app. Replit's application router stitches the static web build (`/`) and the API (`/api`) onto a single domain, so the web client uses relative `/api/...` fetches with cookie sessions.
++- Mobile can't rely on the browser cookie jar, so it captures the session cookie on login and replays it as a `Cookie` header; the cookie is stored in `expo-secure-store` on native (AsyncStorage fallback on web).
++- AI generation is gated two ways: `requireAuth` on every `/api/ai/*` route, plus a per-plan monthly credit (`consumeAiCredit`). Starter is limited; Pro/Lifetime are unlimited. This protects the OpenAI key and ties the paid plans to real value.
++- AI responses stream as SSE; the server aborts the upstream OpenAI request when the client disconnects (`res.on("close")`) so cancelled generations stop billing tokens.
++- The credit policy is split into a pure module (`creditPolicy.ts`, unit-tested) and a DB-backed consumer (`aiCredits.ts`) so the policy can be tested without a database.
+ 
+ ## Product
+ 
+-_Describe the high-level user-facing capabilities of this app once they exist._
++- **Tailor Resume** — paste/upload (PDF/DOCX) a resume + job description → streamed, ATS-oriented rewrite; export DOCX/PDF.
++- **Cover Letter** — generate a tailored cover letter from the same inputs.
++- **My Resumes** — save tailored resumes to the account (Starter: 1; Pro/Lifetime: unlimited).
++- **Plans** — Starter (free, metered AI), Pro ($20/mo subscription), Lifetime ($149.99 one-time), managed via Stripe Checkout + billing portal.
+ 
+-## User preferences
++## Gotchas
+ 
+-_Populate as you build — explicit user instructions worth remembering across sessions._
++- Run `pnpm --filter @workspace/db run push` after editing the schema. The AI-credit columns (`ai_credits_used`, `ai_credits_reset_at`) must exist before the AI routes will work.
++- The Stripe webhook needs the raw request body — it is mounted (`express.raw`) before `express.json()` in `app.ts`, and it is exempt from the general rate limiter. Don't reorder those.
++- `app.set("trust proxy", 1)` is required for correct client IPs behind Replit's proxy (rate limiting depends on it).
++- AI endpoints now require a logged-in session; the web Tailor/Cover Letter pages redirect anonymous visitors to `/login`.
+ 
+-## Gotchas
++## User preferences
+ 
+-_Populate as you build — sharp edges, "always run X before Y" rules._
++- The owner account (`tlc01301@gmail.com`) is granted lifetime access automatically on register/login (`routes/auth.ts`).
+ 
+ ## Pointers
+ 

@@ -1,0 +1,546 @@
+import { useState, useRef, useEffect } from "react";
+import { useLocation, useSearch } from "wouter";
+import Layout from "@/components/Layout";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
+
+interface Experience {
+  id: string;
+  jobTitle: string;
+  company: string;
+  startDate: string;
+  endDate: string;
+  description: string;
+}
+
+interface Education {
+  id: string;
+  school: string;
+  degree: string;
+  startYear: string;
+  endYear: string;
+}
+
+interface ResumeContent {
+  contact: {
+    firstName: string;
+    lastName: string;
+    title: string;
+    email: string;
+    phone: string;
+    summary: string;
+  };
+  experience: Experience[];
+  education: Education[];
+  skills: string[];
+}
+
+function makeId() {
+  return Math.random().toString(36).slice(2);
+}
+
+function makeEmptyExperience(): Experience {
+  return { id: makeId(), jobTitle: "", company: "", startDate: "", endDate: "", description: "" };
+}
+
+function makeEmptyEducation(): Education {
+  return { id: makeId(), school: "", degree: "", startYear: "", endYear: "" };
+}
+
+export default function Builder() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const search = useSearch();
+  const resumeId = new URLSearchParams(search).get("resumeId");
+  const isEditing = Boolean(resumeId);
+
+  const [resumeTitle, setResumeTitle] = useState("My Resume");
+  const [saving, setSaving] = useState(false);
+  const [loadingResume, setLoadingResume] = useState(isEditing);
+  const [activeTab, setActiveTab] = useState("contact");
+
+  const [contact, setContact] = useState({
+    firstName: "", lastName: "", title: "", email: "", phone: "", summary: "",
+  });
+
+  const [experiences, setExperiences] = useState<Experience[]>([makeEmptyExperience()]);
+  const [education, setEducation] = useState<Education[]>([makeEmptyEducation()]);
+  const [skills, setSkills] = useState<string[]>(["JavaScript", "TypeScript", "React", "Node.js"]);
+  const [skillInput, setSkillInput] = useState("");
+
+  const isDirtyRef = useRef(false);
+  const isInitializing = useRef(true);
+
+  function markDirty() {
+    if (!isInitializing.current) {
+      isDirtyRef.current = true;
+    }
+  }
+
+  function markClean() {
+    isDirtyRef.current = false;
+  }
+
+  function confirmLeave(): boolean {
+    if (!isDirtyRef.current) return true;
+    return window.confirm("You have unsaved changes. Leave anyway?");
+  }
+
+  function safeNavigate(path: string) {
+    if (confirmLeave()) {
+      markClean();
+      navigate(path);
+    }
+  }
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirtyRef.current) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
+
+  useEffect(() => {
+    const originalPushState = window.history.pushState.bind(window.history);
+
+    window.history.pushState = function (...args: Parameters<typeof window.history.pushState>) {
+      if (isDirtyRef.current) {
+        if (!window.confirm("You have unsaved changes. Leave anyway?")) {
+          return;
+        }
+        isDirtyRef.current = false;
+      }
+      return originalPushState(...args);
+    };
+
+    return () => {
+      window.history.pushState = originalPushState;
+    };
+  }, []);
+
+  useEffect(() => {
+    const builderPath = window.location.pathname + window.location.search;
+
+    const handlePopState = () => {
+      if (!isDirtyRef.current) return;
+
+      const targetPath = window.location.pathname + window.location.search;
+
+      isDirtyRef.current = false;
+      window.history.pushState(null, "", builderPath);
+      isDirtyRef.current = true;
+
+      if (window.confirm("You have unsaved changes. Leave anyway?")) {
+        isDirtyRef.current = false;
+        navigate(targetPath);
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (!resumeId) {
+      isInitializing.current = false;
+      return;
+    }
+
+    async function loadResume() {
+      setLoadingResume(true);
+      try {
+        const res = await fetch(`/api/resumes/${resumeId}`, { credentials: "include" });
+        if (!res.ok) throw new Error("Failed to load resume");
+        const data = await res.json();
+        const c = data.content as any;
+
+        setResumeTitle(data.title ?? "My Resume");
+
+        if (c?.contact) {
+          setContact({
+            firstName: c.contact.firstName ?? "",
+            lastName: c.contact.lastName ?? "",
+            title: c.contact.title ?? "",
+            email: c.contact.email ?? "",
+            phone: c.contact.phone ?? "",
+            summary: c.contact.summary ?? "",
+          });
+        }
+
+        if (Array.isArray(c?.experience) && c.experience.length > 0) {
+          setExperiences(c.experience.map((e: any) => ({
+            id: e.id ?? makeId(),
+            jobTitle: e.jobTitle ?? "",
+            company: e.company ?? "",
+            startDate: e.startDate ?? "",
+            endDate: e.endDate ?? "",
+            description: e.description ?? "",
+          })));
+        }
+
+        if (Array.isArray(c?.education) && c.education.length > 0) {
+          setEducation(c.education.map((e: any) => ({
+            id: e.id ?? makeId(),
+            school: e.school ?? "",
+            degree: e.degree ?? "",
+            startYear: e.startYear ?? "",
+            endYear: e.endYear ?? "",
+          })));
+        }
+
+        if (Array.isArray(c?.skills) && c.skills.length > 0) {
+          setSkills(c.skills);
+        }
+      } catch (err: any) {
+        toast({ title: "Could not load resume", description: err.message ?? "Please try again.", variant: "destructive" });
+        navigate("/my-resumes");
+      } finally {
+        isInitializing.current = false;
+        setLoadingResume(false);
+      }
+    }
+
+    loadResume();
+  }, [resumeId]);
+
+  function addSkill() {
+    const s = skillInput.trim();
+    if (s && !skills.includes(s)) {
+      setSkills((prev) => [...prev, s]);
+      markDirty();
+    }
+    setSkillInput("");
+  }
+
+  function removeSkill(skill: string) {
+    setSkills((prev) => prev.filter((s) => s !== skill));
+    markDirty();
+  }
+
+  function addExperience() {
+    setExperiences((prev) => [...prev, makeEmptyExperience()]);
+    markDirty();
+  }
+
+  function removeExperience(id: string) {
+    setExperiences((prev) => prev.filter((e) => e.id !== id));
+    markDirty();
+  }
+
+  function updateExperience(id: string, field: keyof Experience, value: string) {
+    setExperiences((prev) => prev.map((e) => e.id === id ? { ...e, [field]: value } : e));
+    markDirty();
+  }
+
+  function addEducation() {
+    setEducation((prev) => [...prev, makeEmptyEducation()]);
+    markDirty();
+  }
+
+  function removeEducation(id: string) {
+    setEducation((prev) => prev.filter((e) => e.id !== id));
+    markDirty();
+  }
+
+  function updateEducation(id: string, field: keyof Education, value: string) {
+    setEducation((prev) => prev.map((e) => e.id === id ? { ...e, [field]: value } : e));
+    markDirty();
+  }
+
+  async function handleSave() {
+    if (!user) {
+      safeNavigate("/login");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const content: ResumeContent = { contact, experience: experiences, education, skills };
+
+      const url = isEditing ? `/api/resumes/${resumeId}` : "/api/resumes";
+      const method = isEditing ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          title: resumeTitle,
+          jobTitle: contact.title || undefined,
+          content,
+        }),
+      });
+
+      if (res.status === 403) {
+        const data = await res.json();
+        toast({
+          title: "Upgrade required",
+          description: data.message ?? "Upgrade to Pro to save unlimited resumes.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (!res.ok) {
+        throw new Error(isEditing ? "Failed to update resume" : "Failed to save resume");
+      }
+
+      toast({
+        title: isEditing ? "Resume updated!" : "Resume saved!",
+        description: "You can find it in My Resumes.",
+      });
+      markClean();
+      navigate("/my-resumes");
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err.message ?? "Please try again.", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loadingResume) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center py-40">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
+  const saveLabel = isEditing ? "Update Resume" : "Save Resume";
+  const finishLabel = isEditing ? "Update Resume" : "Finish & Save";
+
+  return (
+    <Layout>
+      <div className="max-w-4xl mx-auto pb-20">
+        <div className="flex items-center justify-between mb-8 gap-4">
+          <div className="flex-1 min-w-0">
+            <Input
+              value={resumeTitle}
+              onChange={(e) => { setResumeTitle(e.target.value); markDirty(); }}
+              className="text-2xl font-display font-bold border-0 border-b rounded-none px-0 focus-visible:ring-0 bg-transparent h-auto py-1 mb-1"
+            />
+            <p className="text-muted-foreground text-sm">
+              {isEditing
+                ? "Edit your saved resume and update it when you're done."
+                : "Build a professional resume from scratch using our guided wizard."}
+            </p>
+          </div>
+          <Button className="gap-2 shrink-0" onClick={handleSave} disabled={saving}>
+            <Save className="w-4 h-4" />
+            {saving ? (isEditing ? "Updating…" : "Saving…") : saveLabel}
+          </Button>
+        </div>
+
+        {!user && (
+          <div className="mb-6 p-4 rounded-lg border border-primary/20 bg-primary/5 text-sm text-muted-foreground flex items-center gap-3">
+            <Crown className="w-5 h-5 text-primary shrink-0" />
+            <span><a href="/login" className="text-primary underline">Sign in</a> to save and manage your resumes.</span>
+          </div>
+        )}
+
+        {user && user.plan === "starter" && !user.lifetimeAccess && (
+          <div className="mb-6 p-4 rounded-lg border border-yellow-500/20 bg-yellow-500/5 text-sm text-muted-foreground flex items-center gap-3">
+            <Crown className="w-5 h-5 text-yellow-500 shrink-0" />
+            <span>Starter plan: save up to 1 resume. <a href="/#pricing" className="text-primary underline">Upgrade to Pro</a> for unlimited saves.</span>
+          </div>
+        )}
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-4 mb-8">
+            <TabsTrigger value="contact">Contact</TabsTrigger>
+            <TabsTrigger value="experience">Experience</TabsTrigger>
+            <TabsTrigger value="education">Education</TabsTrigger>
+            <TabsTrigger value="skills">Skills</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="contact" className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+            <Card>
+              <CardContent className="pt-6 space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="firstName">First Name</Label>
+                    <Input id="firstName" placeholder="John" value={contact.firstName} onChange={(e) => { setContact((c) => ({ ...c, firstName: e.target.value })); markDirty(); }} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lastName">Last Name</Label>
+                    <Input id="lastName" placeholder="Doe" value={contact.lastName} onChange={(e) => { setContact((c) => ({ ...c, lastName: e.target.value })); markDirty(); }} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="title">Professional Title</Label>
+                  <Input id="title" placeholder="e.g. Senior Product Manager" value={contact.title} onChange={(e) => { setContact((c) => ({ ...c, title: e.target.value })); markDirty(); }} />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input id="email" type="email" placeholder="john@example.com" value={contact.email} onChange={(e) => { setContact((c) => ({ ...c, email: e.target.value })); markDirty(); }} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone</Label>
+                    <Input id="phone" placeholder="+1 (555) 000-0000" value={contact.phone} onChange={(e) => { setContact((c) => ({ ...c, phone: e.target.value })); markDirty(); }} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="summary">Professional Summary</Label>
+                  <textarea
+                    id="summary"
+                    className="flex min-h-[120px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="Briefly describe your professional background and key achievements..."
+                    value={contact.summary}
+                    onChange={(e) => { setContact((c) => ({ ...c, summary: e.target.value })); markDirty(); }}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+            <div className="flex justify-end">
+              <Button className="gap-2" onClick={() => setActiveTab("experience")}>Next: Experience <ArrowRight className="w-4 h-4" /></Button>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="experience" className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+            <Card>
+              <CardContent className="pt-6 space-y-6">
+                {experiences.map((exp, idx) => (
+                  <div key={exp.id} className="border-l-2 border-primary/20 pl-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Job Title</Label>
+                        <Input placeholder="e.g. Software Engineer" value={exp.jobTitle} onChange={(e) => updateExperience(exp.id, "jobTitle", e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Company</Label>
+                        <Input placeholder="e.g. Tech Corp" value={exp.company} onChange={(e) => updateExperience(exp.id, "company", e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Start Date</Label>
+                        <Input type="month" value={exp.startDate} onChange={(e) => updateExperience(exp.id, "startDate", e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>End Date</Label>
+                        <Input type="month" value={exp.endDate} onChange={(e) => updateExperience(exp.id, "endDate", e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Description</Label>
+                      <textarea
+                        className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        placeholder="Describe your responsibilities and achievements..."
+                        value={exp.description}
+                        onChange={(e) => updateExperience(exp.id, "description", e.target.value)}
+                      />
+                    </div>
+                    {experiences.length > 1 && (
+                      <Button variant="destructive" size="sm" className="gap-2" onClick={() => removeExperience(exp.id)}>
+                        <Trash2 className="w-4 h-4" /> Remove
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <Button variant="outline" className="w-full border-dashed gap-2" onClick={addExperience}>
+                  <Plus className="w-4 h-4" /> Add Another Position
+                </Button>
+              </CardContent>
+            </Card>
+            <div className="flex justify-end">
+              <Button className="gap-2" onClick={() => setActiveTab("education")}>Next: Education <ArrowRight className="w-4 h-4" /></Button>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="education" className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+            <Card>
+              <CardContent className="pt-6 space-y-6">
+                {education.map((edu) => (
+                  <div key={edu.id} className="border-l-2 border-primary/20 pl-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>School / University</Label>
+                        <Input placeholder="e.g. University of Technology" value={edu.school} onChange={(e) => updateEducation(edu.id, "school", e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Degree</Label>
+                        <Input placeholder="e.g. Bachelor of Science in Computer Science" value={edu.degree} onChange={(e) => updateEducation(edu.id, "degree", e.target.value)} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Start Year</Label>
+                        <Input type="number" placeholder="2016" value={edu.startYear} onChange={(e) => updateEducation(edu.id, "startYear", e.target.value)} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>End Year (or Expected)</Label>
+                        <Input type="number" placeholder="2020" value={edu.endYear} onChange={(e) => updateEducation(edu.id, "endYear", e.target.value)} />
+                      </div>
+                    </div>
+                    {education.length > 1 && (
+                      <Button variant="destructive" size="sm" className="gap-2" onClick={() => removeEducation(edu.id)}>
+                        <Trash2 className="w-4 h-4" /> Remove
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                <Button variant="outline" className="w-full border-dashed gap-2 hover:border-primary/50 hover:bg-primary/5" onClick={addEducation}>
+                  <Plus className="w-4 h-4" /> Add Another Education
+                </Button>
+              </CardContent>
+            </Card>
+            <div className="flex justify-end">
+              <Button className="gap-2" onClick={() => setActiveTab("skills")}>Next: Skills <ArrowRight className="w-4 h-4" /></Button>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="skills" className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+            <Card>
+              <CardContent className="pt-6 space-y-6">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Add a Skill</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="e.g. React, Project Management, SEO"
+                        value={skillInput}
+                        onChange={(e) => setSkillInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && addSkill()}
+                      />
+                      <Button className="shrink-0 gap-2" onClick={addSkill}><Plus className="w-4 h-4" /> Add</Button>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-4">
+                    {skills.map((skill) => (
+                      <div key={skill} className="flex items-center gap-2 bg-secondary text-secondary-foreground px-3 py-1.5 rounded-md text-sm">
+                        {skill}
+                        <button className="text-secondary-foreground/50 hover:text-destructive transition-colors" onClick={() => removeSkill(skill)}>
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <div className="flex justify-end">
+              <Button className="gap-2" onClick={handleSave} disabled={saving}>
+                <Save className="w-4 h-4" />
+                {saving ? (isEditing ? "Updating…" : "Saving…") : finishLabel}
+              </Button>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </Layout>
+  );
+}
