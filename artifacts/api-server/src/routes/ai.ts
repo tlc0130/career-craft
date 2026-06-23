@@ -8,23 +8,32 @@ import { consumeAiCredit, getUsage } from "../lib/aiCredits";
 
 const router = Router();
 
-// Every AI endpoint requires an authenticated session. This is the fix for
-// the previously open, unmetered OpenAI proxy.
 router.use(requireAuth);
 
 // Lazily instantiated so the server can start (and serve health/auth routes)
-// even if OPENAI_API_KEY isn't set in the environment. The first AI request
-// will surface a clear error rather than crashing the process on boot.
+// even if OPENROUTER_API_KEY isn't set. The first AI request will surface a
+// clear error rather than crashing the process on boot.
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI {
   if (!_openai) {
-    const apiKey = process.env["OPENAI_API_KEY"];
+    const apiKey = process.env["OPENROUTER_API_KEY"];
     if (!apiKey) {
-      throw Object.assign(new Error("OPENAI_API_KEY environment variable is not set."), { status: 503 });
+      throw Object.assign(new Error("OPENROUTER_API_KEY environment variable is not set."), { status: 503 });
     }
-    _openai = new OpenAI({ apiKey });
+    _openai = new OpenAI({
+      apiKey,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": process.env["APP_URL"] ?? "https://hiddentechdaily.com",
+        "X-Title": "CareerCraft",
+      },
+    });
   }
   return _openai;
+}
+
+function getModel(fallback = "openai/gpt-4o-mini"): string {
+  return process.env["OPENROUTER_MODEL"] ?? fallback;
 }
 
 const upload = multer({
@@ -94,7 +103,7 @@ router.post("/ai/tailor", upload.single("resume"), async (req, res) => {
 
     const stream = await getOpenAI().chat.completions.create(
       {
-        model: "gpt-4o-mini",
+        model: getModel(),
         max_tokens: 4096,
         stream: true,
         messages: [
@@ -133,14 +142,13 @@ Return ONLY the tailored resume text, formatted cleanly with clear section heade
       res.end();
     }
   } catch (err: any) {
-    // Client disconnected / stream aborted — nothing left to send.
     if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
     req.log.error({ err }, "AI tailor error");
     const userMessage =
       err?.status === 429
-        ? "OpenAI quota exceeded. Please check your API key's billing plan at platform.openai.com."
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
         : err?.status === 401
-        ? "Invalid OpenAI API key. Please check your OPENAI_API_KEY secret."
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
         : "AI processing failed. Please try again.";
     if (!res.headersSent) {
       res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
@@ -190,7 +198,7 @@ router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
 
     const stream = await getOpenAI().chat.completions.create(
       {
-        model: "gpt-4o-mini",
+        model: getModel(),
         max_tokens: 1500,
         stream: true,
         messages: [
@@ -230,14 +238,13 @@ Return ONLY the cover letter body text (no address block, no date, no signature 
       res.end();
     }
   } catch (err: any) {
-    // Client disconnected / stream aborted — nothing left to send.
     if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
     req.log.error({ err }, "AI cover letter error");
     const userMessage =
       err?.status === 429
-        ? "OpenAI quota exceeded. Please check your API key's billing plan at platform.openai.com."
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
         : err?.status === 401
-        ? "Invalid OpenAI API key. Please check your OPENAI_API_KEY secret."
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
         : "AI processing failed. Please try again.";
     if (!res.headersSent) {
       res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
@@ -258,7 +265,7 @@ router.post("/ai/extract-job-context", async (req, res) => {
     }
 
     const completion = await getOpenAI().chat.completions.create({
-      model: "gpt-4o-mini",
+      model: getModel(),
       max_tokens: 100,
       response_format: { type: "json_object" },
       messages: [

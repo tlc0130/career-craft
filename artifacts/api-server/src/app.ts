@@ -10,8 +10,8 @@ import { generalLimiter, authLimiter, aiLimiter } from "./middlewares/rateLimit"
 
 const app: Express = express();
 
-// Behind Replit's single reverse proxy — trust exactly one hop so the client
-// IP used for rate limiting is the real one, not the proxy's.
+// Trust exactly one reverse-proxy hop (nginx on VPS or Replit's proxy) so
+// the client IP used for rate limiting is the real one, not the proxy's.
 app.set("trust proxy", 1);
 
 app.use(
@@ -34,14 +34,30 @@ app.use(
   }),
 );
 
-const allowedOrigins = (process.env["REPLIT_DOMAINS"] ?? "")
-  .split(",")
-  .map((d) => d.trim())
-  .filter(Boolean)
-  .map((d) => `https://${d}`);
+const allowedOrigins: string[] = [];
+
+// ALLOWED_ORIGINS — comma-separated list of fully-qualified origins, e.g.
+//   https://hiddentechdaily.com,https://www.hiddentechdaily.com
+if (process.env["ALLOWED_ORIGINS"]) {
+  process.env["ALLOWED_ORIGINS"]
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .forEach((o) => allowedOrigins.push(o));
+}
+
+// Legacy Replit support: REPLIT_DOMAINS is a comma-separated list of bare
+// hostnames (without protocol); we prefix them with https://.
+if (process.env["REPLIT_DOMAINS"]) {
+  process.env["REPLIT_DOMAINS"]
+    .split(",")
+    .map((d) => d.trim())
+    .filter(Boolean)
+    .forEach((d) => allowedOrigins.push(`https://${d}`));
+}
 
 if (process.env["NODE_ENV"] !== "production") {
-  allowedOrigins.push("http://localhost:80", "http://localhost:20047");
+  allowedOrigins.push("http://localhost:80", "http://localhost:5173", "http://localhost:20047");
 }
 
 app.use(
