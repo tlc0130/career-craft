@@ -6,9 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2 } from "lucide-react";
+import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2, Download, FileText } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
+import TemplateSelector from "@/components/TemplateSelector";
+import TemplateRenderer from "@/components/TemplateRenderer";
+import { printResume } from "@/lib/pdf-print";
 
 interface Experience {
   id: string;
@@ -53,6 +56,8 @@ function makeEmptyEducation(): Education {
   return { id: makeId(), school: "", degree: "", startYear: "", endYear: "" };
 }
 
+const TEMPLATE_STORAGE_KEY = "selectedTemplate";
+
 export default function Builder() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -74,6 +79,14 @@ export default function Builder() {
   const [education, setEducation] = useState<Education[]>([makeEmptyEducation()]);
   const [skills, setSkills] = useState<string[]>(["JavaScript", "TypeScript", "React", "Node.js"]);
   const [skillInput, setSkillInput] = useState("");
+
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(TEMPLATE_STORAGE_KEY) ?? "classic";
+    } catch {
+      return "classic";
+    }
+  });
 
   const isDirtyRef = useRef(false);
   const isInitializing = useRef(true);
@@ -97,6 +110,15 @@ export default function Builder() {
     if (confirmLeave()) {
       markClean();
       navigate(path);
+    }
+  }
+
+  function handleTemplateSelect(id: string) {
+    setSelectedTemplateId(id);
+    try {
+      localStorage.setItem(TEMPLATE_STORAGE_KEY, id);
+    } catch {
+      // ignore
     }
   }
 
@@ -309,6 +331,11 @@ export default function Builder() {
     }
   }
 
+  function handleDownloadPdf() {
+    const content: ResumeContent = { contact, experience: experiences, education, skills };
+    printResume(selectedTemplateId, content, resumeTitle);
+  }
+
   if (loadingResume) {
     return (
       <Layout>
@@ -321,6 +348,13 @@ export default function Builder() {
 
   const saveLabel = isEditing ? "Update Resume" : "Save Resume";
   const finishLabel = isEditing ? "Update Resume" : "Finish & Save";
+
+  const resumeContent: ResumeContent = { contact, experience: experiences, education, skills };
+
+  // Preview scale: show at ~50% for a decent page preview
+  const PREVIEW_SCALE = 0.5;
+  const PREVIEW_WIDTH = Math.round(794 * PREVIEW_SCALE);
+  const PREVIEW_HEIGHT = Math.round(1123 * PREVIEW_SCALE);
 
   return (
     <Layout>
@@ -359,11 +393,12 @@ export default function Builder() {
         )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-8">
+          <TabsList className="grid w-full grid-cols-5 mb-8">
             <TabsTrigger value="contact">Contact</TabsTrigger>
             <TabsTrigger value="experience">Experience</TabsTrigger>
             <TabsTrigger value="education">Education</TabsTrigger>
             <TabsTrigger value="skills">Skills</TabsTrigger>
+            <TabsTrigger value="preview">Preview</TabsTrigger>
           </TabsList>
 
           <TabsContent value="contact" className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
@@ -532,11 +567,67 @@ export default function Builder() {
                 </div>
               </CardContent>
             </Card>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" className="gap-2" onClick={() => setActiveTab("preview")}>
+                Preview Templates <ArrowRight className="w-4 h-4" />
+              </Button>
               <Button className="gap-2" onClick={handleSave} disabled={saving}>
                 <Save className="w-4 h-4" />
                 {saving ? (isEditing ? "Updating…" : "Saving…") : finishLabel}
               </Button>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="preview" className="space-y-6 animate-in fade-in slide-in-from-bottom-2">
+            {/* Template selector */}
+            <Card>
+              <CardContent className="pt-6">
+                <h3 className="text-base font-semibold mb-4">Choose a Template</h3>
+                <TemplateSelector
+                  selectedId={selectedTemplateId}
+                  onSelect={handleTemplateSelect}
+                  data={resumeContent}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Export buttons */}
+            <div className="flex gap-3 flex-wrap">
+              <Button className="gap-2" onClick={handleDownloadPdf}>
+                <Download className="w-4 h-4" /> Download PDF
+              </Button>
+              <Button variant="outline" className="gap-2" onClick={handleSave} disabled={saving}>
+                <Save className="w-4 h-4" />
+                {saving ? (isEditing ? "Updating…" : "Saving…") : saveLabel}
+              </Button>
+            </div>
+
+            {/* Full-page preview at ~50% scale */}
+            <div>
+              <h3 className="text-base font-semibold mb-3">Full Page Preview</h3>
+              <div
+                style={{
+                  width: `${PREVIEW_WIDTH}px`,
+                  height: `${PREVIEW_HEIGHT}px`,
+                  overflow: 'hidden',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: '8px',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                  position: 'relative',
+                }}
+              >
+                <div
+                  style={{
+                    width: '794px',
+                    transformOrigin: 'top left',
+                    transform: `scale(${PREVIEW_SCALE})`,
+                    pointerEvents: 'none',
+                    userSelect: 'none',
+                  }}
+                >
+                  <TemplateRenderer templateId={selectedTemplateId} data={resumeContent} />
+                </div>
+              </div>
             </div>
           </TabsContent>
         </Tabs>

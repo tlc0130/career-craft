@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import Layout from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Plus, Sparkles, FileText, CheckCircle2, Target, Zap, ShieldCheck, X } from "lucide-react";
+import { Plus, Sparkles, FileText, CheckCircle2, Target, Zap, ShieldCheck, X, BarChart2, Briefcase } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth, startCheckout } from "@/lib/auth";
 import generatedImage from '@assets/generated_images/abstract_3d_documents_tailored_resume_concept.png';
@@ -162,7 +162,7 @@ export default function Home() {
         </div>
 
         {/* Features Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6 pt-8">
           <Card className="bg-card border-border/50 hover:border-primary/50 transition-all shadow-sm">
             <CardHeader>
               <ShieldCheck className="w-10 h-10 text-primary mb-4" />
@@ -204,6 +204,48 @@ export default function Home() {
               </ul>
             </CardContent>
           </Card>
+
+          <Card className="bg-card border-border/50 hover:border-primary/50 transition-all shadow-sm">
+            <CardHeader>
+              <BarChart2 className="w-10 h-10 text-primary mb-4" />
+              <CardTitle className="text-2xl">ATS Keyword Scoring</CardTitle>
+              <CardDescription className="text-base text-muted-foreground/80">Know your match before you apply</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground">
+                Instantly see how well your resume matches a job posting. Get a keyword match score, discover what's missing, and get specific suggestions to improve your chances.
+              </p>
+              <ul className="mt-4 space-y-2">
+                {['Keyword match percentage', 'Missing keyword highlights', 'Actionable suggestions'].map((feature, idx) => (
+                  <li key={idx} className="flex items-center text-sm text-foreground/80">
+                    <CheckCircle2 className="w-4 h-4 text-primary mr-2" />
+                    {feature}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border/50 hover:border-primary/50 transition-all shadow-sm">
+            <CardHeader>
+              <Briefcase className="w-10 h-10 text-primary mb-4" />
+              <CardTitle className="text-2xl">Job Application Tracker</CardTitle>
+              <CardDescription className="text-base text-muted-foreground/80">Never lose track of where you applied</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground">
+                Manage your entire job search in one place. Track applications from saved to offer, add notes, and monitor your pipeline with a visual kanban board.
+              </p>
+              <ul className="mt-4 space-y-2">
+                {['Visual kanban board', 'Status tracking', 'Application notes'].map((feature, idx) => (
+                  <li key={idx} className="flex items-center text-sm text-foreground/80">
+                    <CheckCircle2 className="w-4 h-4 text-primary mr-2" />
+                    {feature}
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Pricing Section */}
@@ -227,7 +269,7 @@ export default function Home() {
               </CardHeader>
               <CardContent className="flex-1">
                 <ul className="space-y-3">
-                  {['1 Resume tailoring', 'Basic ATS scan', 'Download as PDF'].map((f) => (
+                  {['5 AI tailoring uses/month', 'ATS keyword scorer', '25 resume templates', 'DOCX & PDF export'].map((f) => (
                     <li key={f} className="flex items-start text-sm">
                       <CheckCircle2 className="w-5 h-5 text-muted-foreground mr-2 shrink-0" />
                       <span className="text-muted-foreground">{f}</span>
@@ -265,7 +307,7 @@ export default function Home() {
               </CardHeader>
               <CardContent className="flex-1">
                 <ul className="space-y-3">
-                  {['Unlimited resume tailoring', 'Unlimited cover letters', 'Deep ATS keyword matching', 'Job tracker dashboard'].map((f) => (
+                  {['Unlimited AI tailoring & cover letters', 'Advanced ATS scoring', 'Job application tracker', '25 resume templates', 'Priority AI model access'].map((f) => (
                     <li key={f} className="flex items-start text-sm">
                       <CheckCircle2 className="w-5 h-5 text-primary mr-2 shrink-0" />
                       <span>{f}</span>
@@ -302,7 +344,7 @@ export default function Home() {
               </CardHeader>
               <CardContent className="flex-1">
                 <ul className="space-y-3">
-                  {['All Pro features', 'Never pay monthly fees', 'Access to future updates'].map((f) => (
+                  {['Everything in Pro', 'Never pay monthly again', 'All future features included', 'One-time payment'].map((f) => (
                     <li key={f} className="flex items-start text-sm">
                       <CheckCircle2 className="w-5 h-5 text-primary mr-2 shrink-0" />
                       <span>{f}</span>

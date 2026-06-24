@@ -7,6 +7,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { FileText, Trash2, Download, Plus, Crown, Loader2, Calendar, Pencil } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
+import { printResume } from "@/lib/pdf-print";
+import { ResumeContent } from "@/components/templates/types";
 
 interface Resume {
   id: string;
@@ -15,6 +17,16 @@ interface Resume {
   content: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+const TEMPLATE_STORAGE_KEY = "selectedTemplate";
+
+function getStoredTemplate(): string {
+  try {
+    return localStorage.getItem(TEMPLATE_STORAGE_KEY) ?? "classic";
+  } catch {
+    return "classic";
+  }
 }
 
 function formatDate(iso: string) {
@@ -29,6 +41,36 @@ function formatDateTime(iso: string) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function resumeContentFromRecord(record: Record<string, unknown>): ResumeContent {
+  const c = record as any;
+  return {
+    contact: {
+      firstName: c?.contact?.firstName ?? "",
+      lastName: c?.contact?.lastName ?? "",
+      title: c?.contact?.title ?? "",
+      email: c?.contact?.email ?? "",
+      phone: c?.contact?.phone ?? "",
+      summary: c?.contact?.summary ?? "",
+    },
+    experience: Array.isArray(c?.experience) ? c.experience.map((e: any) => ({
+      id: e.id ?? "",
+      jobTitle: e.jobTitle ?? "",
+      company: e.company ?? "",
+      startDate: e.startDate ?? "",
+      endDate: e.endDate ?? "",
+      description: e.description ?? "",
+    })) : [],
+    education: Array.isArray(c?.education) ? c.education.map((e: any) => ({
+      id: e.id ?? "",
+      school: e.school ?? "",
+      degree: e.degree ?? "",
+      startYear: e.startYear ?? "",
+      endYear: e.endYear ?? "",
+    })) : [],
+    skills: Array.isArray(c?.skills) ? c.skills : [],
+  };
 }
 
 export default function MyResumes() {
@@ -76,66 +118,10 @@ export default function MyResumes() {
     }
   }
 
-  function handleDownload(resume: Resume) {
-    const content = resume.content as any;
-    const contact = content?.contact ?? {};
-    const experience: any[] = content?.experience ?? [];
-    const education: any[] = content?.education ?? [];
-    const skills: string[] = content?.skills ?? [];
-
-    const lines: string[] = [];
-    lines.push(`${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim() || resume.title);
-    if (contact.title) lines.push(contact.title);
-    if (contact.email || contact.phone) {
-      lines.push([contact.email, contact.phone].filter(Boolean).join(" | "));
-    }
-    lines.push("");
-
-    if (contact.summary) {
-      lines.push("SUMMARY");
-      lines.push(contact.summary);
-      lines.push("");
-    }
-
-    if (experience.length > 0) {
-      lines.push("EXPERIENCE");
-      for (const e of experience) {
-        if (e.jobTitle || e.company) {
-          lines.push(`${e.jobTitle ?? ""} — ${e.company ?? ""}`.trim());
-        }
-        if (e.startDate || e.endDate) {
-          lines.push(`${e.startDate ?? ""} – ${e.endDate ?? "Present"}`);
-        }
-        if (e.description) lines.push(e.description);
-        lines.push("");
-      }
-    }
-
-    if (education.length > 0) {
-      lines.push("EDUCATION");
-      for (const e of education) {
-        if (e.school || e.degree) {
-          lines.push(`${e.degree ?? ""} — ${e.school ?? ""}`.trim());
-        }
-        if (e.startYear || e.endYear) {
-          lines.push(`${e.startYear ?? ""} – ${e.endYear ?? ""}`);
-        }
-        lines.push("");
-      }
-    }
-
-    if (skills.length > 0) {
-      lines.push("SKILLS");
-      lines.push(skills.join(", "));
-    }
-
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${resume.title.replace(/\s+/g, "_")}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+  function handleExportPdf(resume: Resume) {
+    const templateId = getStoredTemplate();
+    const content = resumeContentFromRecord(resume.content);
+    printResume(templateId, content, resume.title);
   }
 
   const isPro = user?.plan === "pro" || user?.lifetimeAccess;
@@ -245,9 +231,9 @@ export default function MyResumes() {
                     variant="outline"
                     size="sm"
                     className="gap-2"
-                    onClick={() => handleDownload(resume)}
+                    onClick={() => handleExportPdf(resume)}
                   >
-                    <Download className="w-4 h-4" /> Download
+                    <Download className="w-4 h-4" /> Export PDF
                   </Button>
                   <Button
                     variant="ghost"

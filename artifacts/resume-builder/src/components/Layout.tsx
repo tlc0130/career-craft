@@ -9,6 +9,8 @@ import {
   Crown,
   User,
   FolderOpen,
+  BarChart2,
+  Briefcase,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +27,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { icon: LayoutDashboard, label: "Dashboard", href: "/" },
     { icon: Wand2, label: "Tailor Resume", href: "/tailor" },
     { icon: FileText, label: "Cover Letter", href: "/cover-letter" },
+    { icon: BarChart2, label: "ATS Score", href: "/ats-score" },
+    { icon: Briefcase, label: "Job Tracker", href: "/job-tracker" },
     { icon: PenTool, label: "Resume Builder", href: "/builder" },
     { icon: FolderOpen, label: "My Resumes", href: "/my-resumes" },
   ];

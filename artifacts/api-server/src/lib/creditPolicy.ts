@@ -4,7 +4,7 @@
  */
 
 export const STARTER_MONTHLY_AI_LIMIT = Number(
-  process.env["STARTER_MONTHLY_AI_LIMIT"] ?? 3,
+  process.env["STARTER_MONTHLY_AI_LIMIT"] ?? 5,
 );
 
 export const CREDIT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;

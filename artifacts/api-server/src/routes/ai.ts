@@ -296,6 +296,117 @@ router.post("/ai/extract-job-context", async (req, res) => {
   }
 });
 
+router.post("/ai/ats-score", async (req, res) => {
+  try {
+    const resumeText = (req.body as { resumeText?: string }).resumeText ?? "";
+    const jobDescription = (req.body as { jobDescription?: string }).jobDescription ?? "";
+
+    if (!resumeText || !jobDescription) {
+      res.status(400).json({ error: "resumeText and jobDescription are required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 500,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You are an ATS (Applicant Tracking System) expert. Analyze the resume against the job description and return a JSON object with exactly these fields:
+- "score": integer 0-100 representing how well the resume matches the job description
+- "label": string — use exactly "Weak Match" for 0-39, "Fair Match" for 40-59, "Good Match" for 60-79, "Strong Match" for 80-100
+- "foundKeywords": array of strings — important keywords from the job description found in the resume
+- "missingKeywords": array of strings — important keywords from the job description missing from the resume
+- "suggestions": array of 2-4 strings — specific, actionable suggestions to improve the match score
+
+Return ONLY the JSON object, no commentary.`,
+        },
+        {
+          role: "user",
+          content: `Resume:\n\n${resumeText}\n\n---\n\nJob Description:\n\n${jobDescription}`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Failed to parse AI response" });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err: any) {
+    req.log.error({ err }, "AI ats-score error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
+router.post("/ai/resume-score", async (req, res) => {
+  try {
+    const resumeText = (req.body as { resumeText?: string }).resumeText ?? "";
+
+    if (!resumeText) {
+      res.status(400).json({ error: "resumeText is required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 700,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `You are an expert resume reviewer. Analyze the resume and return a JSON object with exactly these fields:
+- "overallScore": integer 0-100
+- "grade": string — use exactly "A+" for 90-100, "A" for 80-89, "B" for 70-79, "C" for 60-69, "D" for 50-59, "F" for below 50
+- "sections": array of exactly 5 objects, each with:
+  - "name": string (use these names in order: "Impact & Metrics", "Action Verbs", "Skills Clarity", "Completeness", "ATS Readability")
+  - "score": integer 0-100 for that section
+  - "feedback": string with specific, actionable feedback for that section
+- "topImprovements": array of 3 strings — the highest-priority improvements the candidate should make
+
+Return ONLY the JSON object, no commentary.`,
+        },
+        {
+          role: "user",
+          content: `Resume:\n\n${resumeText}`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Failed to parse AI response" });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err: any) {
+    req.log.error({ err }, "AI resume-score error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
 router.get("/ai/usage", async (req, res) => {
   try {
     const usage = await getUsage(req.session.userId!);
