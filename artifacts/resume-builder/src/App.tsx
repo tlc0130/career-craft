@@ -13,6 +13,8 @@ import Login from "@/pages/Login";
 import MyResumes from "@/pages/MyResumes";
 import JobTracker from "@/pages/JobTracker";
 import ATSScore from "@/pages/ATSScore";
+import InterviewPrep from "@/pages/InterviewPrep";
+import Profile from "@/pages/Profile";
 
 function Router() {
   return (
@@ -24,6 +26,8 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/my-resumes" component={MyResumes} />
       <Route path="/ats-score" component={ATSScore} />
+      <Route path="/interview-prep" component={InterviewPrep} />
+      <Route path="/profile" component={Profile} />
       <Route path="/job-tracker" component={JobTracker} />
       <Route component={NotFound} />
     </Switch>

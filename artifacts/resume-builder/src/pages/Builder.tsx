@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2, Download, FileText } from "lucide-react";
+import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2, Download, FileText, Wand2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import TemplateSelector from "@/components/TemplateSelector";
@@ -38,6 +38,9 @@ interface ResumeContent {
     email: string;
     phone: string;
     summary: string;
+    location?: string;
+    linkedin?: string;
+    website?: string;
   };
   experience: Experience[];
   education: Education[];
@@ -73,7 +76,13 @@ export default function Builder() {
 
   const [contact, setContact] = useState({
     firstName: "", lastName: "", title: "", email: "", phone: "", summary: "",
+    location: "", linkedin: "", website: "",
   });
+
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
+  const [generatingBullets, setGeneratingBullets] = useState<Record<string, boolean>>({});
+  const [bulletsErrors, setBulletsErrors] = useState<Record<string, string>>({});
 
   const [experiences, setExperiences] = useState<Experience[]>([makeEmptyExperience()]);
   const [education, setEducation] = useState<Education[]>([makeEmptyEducation()]);
@@ -197,6 +206,9 @@ export default function Builder() {
             email: c.contact.email ?? "",
             phone: c.contact.phone ?? "",
             summary: c.contact.summary ?? "",
+            location: c.contact.location ?? "",
+            linkedin: c.contact.linkedin ?? "",
+            website: c.contact.website ?? "",
           });
         }
 
@@ -278,6 +290,63 @@ export default function Builder() {
   function updateEducation(id: string, field: keyof Education, value: string) {
     setEducation((prev) => prev.map((e) => e.id === id ? { ...e, [field]: value } : e));
     markDirty();
+  }
+
+  async function handleGenerateSummary() {
+    setGeneratingSummary(true);
+    setSummaryError("");
+    try {
+      const experienceSnippets = experiences.slice(0, 2)
+        .map((e) => `${e.jobTitle} at ${e.company}: ${e.description.slice(0, 100)}`)
+        .join("; ");
+      const res = await fetch("/api/ai/generate-summary", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobTitle: contact.title, experienceSnippets }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(err.error ?? "Request failed");
+      }
+      const data = await res.json();
+      setContact((c) => ({ ...c, summary: data.summary }));
+      markDirty();
+    } catch (err: any) {
+      setSummaryError(err.message ?? "Failed to generate summary");
+    } finally {
+      setGeneratingSummary(false);
+    }
+  }
+
+  async function handleGenerateBullets(expId: string) {
+    const entry = experiences.find((e) => e.id === expId);
+    if (!entry) return;
+    setGeneratingBullets((prev) => ({ ...prev, [expId]: true }));
+    setBulletsErrors((prev) => ({ ...prev, [expId]: "" }));
+    try {
+      const res = await fetch("/api/ai/generate-bullets", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobTitle: entry.jobTitle,
+          company: entry.company,
+          roleDescription: entry.description || `${entry.jobTitle} at ${entry.company}`,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(err.error ?? "Request failed");
+      }
+      const data = await res.json();
+      const bulletsText = (data.bullets as string[]).map((b) => `• ${b}`).join("\n");
+      updateExperience(expId, "description", bulletsText);
+    } catch (err: any) {
+      setBulletsErrors((prev) => ({ ...prev, [expId]: err.message ?? "Failed to generate bullets" }));
+    } finally {
+      setGeneratingBullets((prev) => ({ ...prev, [expId]: false }));
+    }
   }
 
   async function handleSave() {
@@ -428,6 +497,20 @@ export default function Builder() {
                     <Input id="phone" placeholder="+1 (555) 000-0000" value={contact.phone} onChange={(e) => { setContact((c) => ({ ...c, phone: e.target.value })); markDirty(); }} />
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="location">Location</Label>
+                    <Input id="location" placeholder="City, State or Remote" value={contact.location} onChange={(e) => { setContact((c) => ({ ...c, location: e.target.value })); markDirty(); }} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="linkedin">LinkedIn</Label>
+                    <Input id="linkedin" placeholder="linkedin.com/in/your-name" value={contact.linkedin} onChange={(e) => { setContact((c) => ({ ...c, linkedin: e.target.value })); markDirty(); }} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="website">Website</Label>
+                  <Input id="website" placeholder="yourportfolio.com" value={contact.website} onChange={(e) => { setContact((c) => ({ ...c, website: e.target.value })); markDirty(); }} />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="summary">Professional Summary</Label>
                   <textarea
@@ -437,6 +520,19 @@ export default function Builder() {
                     value={contact.summary}
                     onChange={(e) => { setContact((c) => ({ ...c, summary: e.target.value })); markDirty(); }}
                   />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="gap-1.5 text-xs h-7 px-2"
+                      onClick={handleGenerateSummary}
+                      disabled={generatingSummary}
+                    >
+                      {generatingSummary ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                      {generatingSummary ? "Generating..." : "Generate with AI ✨"}
+                    </Button>
+                    {summaryError && <span className="text-xs text-destructive">{summaryError}</span>}
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -478,6 +574,19 @@ export default function Builder() {
                         value={exp.description}
                         onChange={(e) => updateExperience(exp.id, "description", e.target.value)}
                       />
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5 text-xs h-7 px-2"
+                          onClick={() => handleGenerateBullets(exp.id)}
+                          disabled={generatingBullets[exp.id]}
+                        >
+                          {generatingBullets[exp.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                          {generatingBullets[exp.id] ? "Generating..." : "✨ Generate bullets"}
+                        </Button>
+                        {bulletsErrors[exp.id] && <span className="text-xs text-destructive">{bulletsErrors[exp.id]}</span>}
+                      </div>
                     </div>
                     {experiences.length > 1 && (
                       <Button variant="destructive" size="sm" className="gap-2" onClick={() => removeExperience(exp.id)}>

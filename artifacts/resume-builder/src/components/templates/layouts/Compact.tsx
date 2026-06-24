@@ -87,6 +87,15 @@ export default function Compact({ data, theme }: TemplateProps) {
           <p style={{ fontSize: '8.5pt', color: theme.muted, margin: 0 }}>
             {[contact.email, contact.phone].filter(Boolean).join('  |  ')}
           </p>
+          {(contact.location || contact.linkedin || contact.website) && (
+            <p style={{ fontSize: '8pt', color: theme.muted, margin: '2px 0 0 0' }}>
+              {[
+                contact.location ? `📍 ${contact.location}` : null,
+                contact.linkedin ? `🔗 ${contact.linkedin}` : null,
+                contact.website ? `🌐 ${contact.website}` : null,
+              ].filter(Boolean).join('  |  ')}
+            </p>
+          )}
         </div>
       </div>
 
