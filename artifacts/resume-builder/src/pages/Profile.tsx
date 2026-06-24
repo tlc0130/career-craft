@@ -6,7 +6,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Lock, Loader2, UserCircle, CheckCircle2 } from "lucide-react";
+import { Lock, Loader2, UserCircle, CheckCircle2, Download, Trash2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
 import { Link } from "wouter";
 
@@ -28,6 +35,10 @@ export default function Profile() {
 
   const [stats, setStats] = useState<StatsData | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
+
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Redirect unauthenticated users
   useEffect(() => {
@@ -73,6 +84,26 @@ export default function Profile() {
       setSaveError(err.message ?? "Failed to save changes.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDeleteAccount() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch('/api/auth/account', {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (res.ok) {
+        window.location.href = '/login';
+      } else {
+        setDeleting(false);
+        setDeleteError('Failed to delete account. Please try again or contact support.');
+      }
+    } catch {
+      setDeleting(false);
+      setDeleteError('An error occurred. Please try again.');
     }
   }
 
@@ -239,11 +270,85 @@ export default function Profile() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              To change your password or delete your account, contact support.
+              To change your password, contact support.
             </p>
           </CardContent>
         </Card>
+
+        {/* Data & Privacy card */}
+        <Card className="bg-card border-border/50">
+          <CardHeader>
+            <CardTitle>Data &amp; Privacy</CardTitle>
+            <CardDescription>Manage your personal data in accordance with GDPR and privacy regulations.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Export */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Export My Data</p>
+              <p className="text-sm text-muted-foreground">
+                Download a copy of all your data including your profile, resumes, and job applications.
+              </p>
+              <a href="/api/auth/export-data" target="_blank" rel="noreferrer">
+                <Button variant="outline" className="flex items-center gap-2">
+                  <Download className="w-4 h-4" /> Export My Data
+                </Button>
+              </a>
+            </div>
+
+            {/* Delete account */}
+            <div className="space-y-2 pt-2 border-t border-border">
+              <p className="text-sm font-medium text-destructive">Delete Account</p>
+              <p className="text-sm text-muted-foreground">
+                Permanently delete your account and all associated data. This cannot be undone.
+              </p>
+              <Button
+                variant="destructive"
+                className="flex items-center gap-2"
+                onClick={() => { setShowDeleteDialog(true); setDeleteError(null); }}
+              >
+                <Trash2 className="w-4 h-4" /> Delete Account
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Delete Account Confirmation Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={(open) => { if (!deleting) setShowDeleteDialog(open); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Account</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will permanently delete your profile, all resumes, and all job applications. This action cannot be undone.
+          </p>
+          {deleteError && (
+            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+              {deleteError}
+            </div>
+          )}
+          <DialogFooter className="gap-2 pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowDeleteDialog(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeleteAccount}
+              disabled={deleting}
+              className="gap-2"
+            >
+              {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+              Delete My Account
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
