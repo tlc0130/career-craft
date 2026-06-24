@@ -285,15 +285,18 @@ router.post("/ai/extract-job-context", async (req, res) => {
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: { company?: string | null; title?: string | null } = {};
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
-    } catch {}
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
+    } catch {
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
+      return;
+    }
 
     res.json({
-      company: typeof parsed.company === "string" ? parsed.company : null,
-      title: typeof parsed.title === "string" ? parsed.title : null,
+      company: typeof result["company"] === "string" ? result["company"] : null,
+      title: typeof result["title"] === "string" ? result["title"] : null,
     });
   } catch (err: any) {
     req.log.error({ err }, "AI extract-job-context error");
@@ -334,16 +337,16 @@ Return ONLY the JSON object, no commentary.`,
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: unknown;
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
     } catch {
-      res.status(500).json({ error: "Failed to parse AI response" });
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
       return;
     }
 
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI ats-score error");
     const userMessage =
@@ -390,16 +393,16 @@ Return ONLY the JSON object, no commentary.`,
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: unknown;
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
     } catch {
-      res.status(500).json({ error: "Failed to parse AI response" });
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
       return;
     }
 
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI resume-score error");
     const userMessage =
@@ -438,16 +441,16 @@ router.post("/ai/generate-summary", aiHelperLimiter, async (req, res) => {
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: unknown;
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
     } catch {
-      res.status(500).json({ error: "Failed to parse AI response" });
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
       return;
     }
 
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI generate-summary error");
     const userMessage =
@@ -487,16 +490,16 @@ router.post("/ai/generate-bullets", aiHelperLimiter, async (req, res) => {
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: unknown;
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
     } catch {
-      res.status(500).json({ error: "Failed to parse AI response" });
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
       return;
     }
 
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI generate-bullets error");
     const userMessage =
@@ -535,16 +538,16 @@ router.post("/ai/interview-prep", aiHelperLimiter, async (req, res) => {
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: unknown;
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
     } catch {
-      res.status(500).json({ error: "Failed to parse AI response" });
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
       return;
     }
 
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI interview-prep error");
     const userMessage =
