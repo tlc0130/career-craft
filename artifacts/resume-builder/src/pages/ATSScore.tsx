@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { BarChart2, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
+import { BarChart2, Loader2, CheckCircle2, AlertCircle, BookOpen } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 
@@ -363,6 +363,205 @@ function ResumeScoreTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Skills Gap Tab
+// ---------------------------------------------------------------------------
+interface SkillsGapResult {
+  hasSkills: string[];
+  missingTechnical: string[];
+  missingSoft: string[];
+  prioritySkill: string;
+  learningPath: { skill: string; how: string }[];
+}
+
+function SkillsGapTab() {
+  const { toast } = useToast();
+  const [resumeText, setResumeText] = useState("");
+  const [jobDescription, setJobDescription] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<SkillsGapResult | null>(null);
+  const [error, setError] = useState("");
+
+  async function handleAnalyze() {
+    if (!resumeText.trim() || !jobDescription.trim()) return;
+    setLoading(true);
+    setResult(null);
+    setError("");
+    try {
+      const res = await fetch("/api/ai/skills-gap", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeText, jobDescription }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(err.error ?? "Request failed");
+      }
+      setResult(await res.json());
+    } catch (err: any) {
+      setError(err.message ?? "Analysis failed");
+      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <p className="text-muted-foreground text-sm">
+        Compare your skills against a job description to identify gaps and get a personalized learning path.
+      </p>
+
+      {/* Input area */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Your Resume</label>
+          <Textarea
+            value={resumeText}
+            onChange={(e) => setResumeText(e.target.value)}
+            placeholder="Paste your full resume text here…"
+            className="min-h-[260px] resize-y font-mono text-xs"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-sm font-medium">Job Description</label>
+          <Textarea
+            value={jobDescription}
+            onChange={(e) => setJobDescription(e.target.value)}
+            placeholder="Paste the full job posting here…"
+            className="min-h-[260px] resize-y text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button
+          onClick={handleAnalyze}
+          disabled={loading || !resumeText.trim() || !jobDescription.trim()}
+          className="gap-2"
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <BookOpen className="w-4 h-4" />}
+          {loading ? "Analyzing…" : "Analyze Skills Gap"}
+        </Button>
+      </div>
+
+      {error && (
+        <p className="text-sm text-destructive">{error}</p>
+      )}
+
+      {/* Results */}
+      {result && (
+        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+          {/* Skills You Have */}
+          <Card className="bg-card border-green-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-green-400">
+                <CheckCircle2 className="w-4 h-4" />
+                Skills You Have ({result.hasSkills.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {result.hasSkills.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">No matching skills detected.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {result.hasSkills.map((skill) => (
+                    <Badge key={skill} className="bg-green-500/10 text-green-400 border border-green-500/20 text-xs">
+                      {skill}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Missing Technical Skills */}
+          <Card className="bg-card border-red-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-red-400">
+                <AlertCircle className="w-4 h-4" />
+                Missing Technical Skills ({result.missingTechnical.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {result.missingTechnical.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">None identified.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {result.missingTechnical.map((skill) => (
+                    <Badge key={skill} variant="outline" className="border-dashed border-red-500/40 text-red-400 text-xs">
+                      {skill}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Missing Soft Skills */}
+          <Card className="bg-card border-amber-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold flex items-center gap-2 text-amber-400">
+                <AlertCircle className="w-4 h-4" />
+                Missing Soft Skills ({result.missingSoft.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {result.missingSoft.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">None identified.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {result.missingSoft.map((skill) => (
+                    <Badge key={skill} variant="outline" className="border-dashed border-amber-500/40 text-amber-400 text-xs">
+                      {skill}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Priority Skill */}
+          {result.prioritySkill && (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-5">
+              <h3 className="text-sm font-semibold text-primary flex items-center gap-2 mb-2">
+                <BookOpen className="w-4 h-4" />
+                Priority Skill to Learn
+              </h3>
+              <p className="text-sm text-foreground font-medium">{result.prioritySkill}</p>
+            </div>
+          )}
+
+          {/* Learning Path */}
+          {result.learningPath.length > 0 && (
+            <Card className="bg-card border-border/50">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Your Learning Path</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ol className="space-y-3">
+                  {result.learningPath.map((item, i) => (
+                    <li key={i} className="flex gap-3 text-sm">
+                      <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-xs flex items-center justify-center shrink-0 font-bold mt-0.5">
+                        {i + 1}
+                      </span>
+                      <div>
+                        <span className="font-medium text-foreground">{item.skill}</span>
+                        <span className="text-muted-foreground"> — {item.how}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 export default function ATSScore() {
@@ -400,6 +599,7 @@ export default function ATSScore() {
           <TabsList className="mb-6">
             <TabsTrigger value="ats-match">ATS Match Score</TabsTrigger>
             <TabsTrigger value="resume-score">Resume Score</TabsTrigger>
+            <TabsTrigger value="skills-gap">Skills Gap</TabsTrigger>
           </TabsList>
 
           <TabsContent value="ats-match">
@@ -408,6 +608,10 @@ export default function ATSScore() {
 
           <TabsContent value="resume-score">
             <ResumeScoreTab />
+          </TabsContent>
+
+          <TabsContent value="skills-gap">
+            <SkillsGapTab />
           </TabsContent>
         </Tabs>
       </div>

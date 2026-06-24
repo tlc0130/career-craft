@@ -338,7 +338,33 @@ export default function JobTracker() {
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
         ) : (
-          /* Kanban board */
+          <>
+          {/* Pipeline stats bar */}
+          {jobs.length > 0 && (
+            <div className="mb-6 flex items-center justify-between flex-wrap gap-3">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(["saved", "applied", "phone_screen", "interview", "offer"] as const).map((key, idx, arr) => {
+                  const statusDef = STATUS_MAP[key];
+                  const count = jobsByStatus[key].length;
+                  return (
+                    <span key={key} className="flex items-center gap-1.5">
+                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${statusDef.badgeClass}`}>
+                        {statusDef.label} ({count})
+                      </span>
+                      {idx < arr.length - 1 && (
+                        <span className="text-muted-foreground text-sm">→</span>
+                      )}
+                    </span>
+                  );
+                })}
+              </div>
+              {jobsByStatus.rejected.length > 0 && (
+                <span className="text-xs text-muted-foreground">{jobsByStatus.rejected.length} Rejected</span>
+              )}
+            </div>
+          )}
+
+          {/* Kanban board */}
           <div className="overflow-x-auto pb-4">
             <div className="flex gap-4 min-w-max">
               {STATUSES.map((statusDef) => {
@@ -401,6 +427,23 @@ export default function JobTracker() {
                                 </span>
                               </div>
 
+                              {/* Salary / follow-up */}
+                              {(job.salary || (job.followUpDate && new Date(job.followUpDate) > new Date())) && (
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {job.salary && (
+                                    <span className="text-xs text-muted-foreground">
+                                      ${Math.round(job.salary / 1000)}k/yr
+                                    </span>
+                                  )}
+                                  {job.followUpDate && new Date(job.followUpDate) > new Date() && (
+                                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                      <Calendar className="w-3 h-3 shrink-0" />
+                                      {formatDate(job.followUpDate)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
                               {/* Quick status change */}
                               <div
                                 className="pt-1"
@@ -434,6 +477,7 @@ export default function JobTracker() {
               })}
             </div>
           </div>
+          </>
         )}
 
         {/* Add / Edit Dialog */}
@@ -517,6 +561,59 @@ export default function JobTracker() {
                   placeholder="Recruiter name, interview notes, follow-up dates…"
                   rows={3}
                 />
+              </div>
+
+              {/* Additional Details toggle */}
+              <div>
+                <button
+                  type="button"
+                  className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
+                  onClick={() => setShowMoreDetails((v) => !v)}
+                >
+                  {showMoreDetails ? "Show Less ▲" : "Show More ▼"}
+                </button>
+                {showMoreDetails && (
+                  <div className="mt-3 space-y-3 border-t border-border pt-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="salary">Expected Salary (USD/year)</Label>
+                      <Input
+                        id="salary"
+                        type="number"
+                        placeholder="85000"
+                        value={form.salary}
+                        onChange={(e) => setForm((f) => ({ ...f, salary: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contactName">Contact Name</Label>
+                      <Input
+                        id="contactName"
+                        placeholder="Jane Smith (Recruiter)"
+                        value={form.contactName}
+                        onChange={(e) => setForm((f) => ({ ...f, contactName: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="contactEmail">Contact Email</Label>
+                      <Input
+                        id="contactEmail"
+                        type="email"
+                        placeholder="recruiter@company.com"
+                        value={form.contactEmail}
+                        onChange={(e) => setForm((f) => ({ ...f, contactEmail: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="followUpDate">Follow-up Date</Label>
+                      <Input
+                        id="followUpDate"
+                        type="date"
+                        value={form.followUpDate}
+                        onChange={(e) => setForm((f) => ({ ...f, followUpDate: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <DialogFooter className="gap-2 pt-2">
