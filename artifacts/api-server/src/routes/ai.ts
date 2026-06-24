@@ -5,6 +5,7 @@ import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import mammoth from "mammoth";
 import { requireAuth } from "../middlewares/auth";
 import { consumeAiCredit, getUsage } from "../lib/aiCredits";
+import { aiHelperLimiter } from "../middlewares/rateLimit";
 
 const router = Router();
 
@@ -411,7 +412,7 @@ Return ONLY the JSON object, no commentary.`,
   }
 });
 
-router.post("/ai/generate-summary", async (req, res) => {
+router.post("/ai/generate-summary", aiHelperLimiter, async (req, res) => {
   try {
     const jobTitle = (req.body as { jobTitle?: string }).jobTitle ?? "";
     const experienceSnippets = (req.body as { experienceSnippets?: string }).experienceSnippets ?? "";
@@ -459,7 +460,7 @@ router.post("/ai/generate-summary", async (req, res) => {
   }
 });
 
-router.post("/ai/generate-bullets", async (req, res) => {
+router.post("/ai/generate-bullets", aiHelperLimiter, async (req, res) => {
   try {
     const jobTitle = (req.body as { jobTitle?: string }).jobTitle ?? "";
     const company = (req.body as { company?: string }).company ?? "";
@@ -508,7 +509,7 @@ router.post("/ai/generate-bullets", async (req, res) => {
   }
 });
 
-router.post("/ai/interview-prep", async (req, res) => {
+router.post("/ai/interview-prep", aiHelperLimiter, async (req, res) => {
   try {
     const jobDescription = (req.body as { jobDescription?: string }).jobDescription ?? "";
     const resumeText = (req.body as { resumeText?: string }).resumeText;
@@ -556,7 +557,7 @@ router.post("/ai/interview-prep", async (req, res) => {
   }
 });
 
-router.post("/ai/skills-gap", async (req, res) => {
+router.post("/ai/skills-gap", aiHelperLimiter, async (req, res) => {
   try {
     const resumeText = (req.body as { resumeText?: string }).resumeText ?? "";
     const jobDescription = (req.body as { jobDescription?: string }).jobDescription ?? "";
@@ -604,7 +605,7 @@ router.post("/ai/skills-gap", async (req, res) => {
   }
 });
 
-router.post("/ai/import-linkedin", async (req, res) => {
+router.post("/ai/import-linkedin", aiHelperLimiter, async (req, res) => {
   try {
     if (!req.session?.userId) {
       res.status(401).json({ error: "Not authenticated" });
@@ -629,7 +630,7 @@ router.post("/ai/import-linkedin", async (req, res) => {
         },
         {
           role: "user",
-          content: `Parse this LinkedIn profile text into a structured resume. LinkedIn text: ${profileText}
+          content: `Parse this LinkedIn profile text into a structured resume. LinkedIn text: ${profileText.slice(0, 4000)}
 
 Return this exact JSON structure (all fields optional except where shown):
 {

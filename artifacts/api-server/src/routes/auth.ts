@@ -223,6 +223,7 @@ router.get("/auth/google/callback", async (req, res) => {
       res.redirect(`${appUrl}/login?error=oauth_state`);
       return;
     }
+    delete req.session.oauthState;
 
     if (oauthError) {
       res.redirect(`${appUrl}/login?error=oauth_denied`);

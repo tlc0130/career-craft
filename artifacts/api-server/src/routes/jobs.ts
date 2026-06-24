@@ -104,7 +104,7 @@ router.put("/jobs/:id", requireAuth, async (req, res) => {
         ...parsed.data,
         updatedAt: new Date(),
       })
-      .where(eq(jobApplications.id, req.params.id))
+      .where(and(eq(jobApplications.id, req.params.id), eq(jobApplications.userId, req.session.userId!)))
       .returning();
 
     res.json(updated);
