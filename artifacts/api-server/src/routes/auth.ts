@@ -1,8 +1,8 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
-import { db, users, registerSchema, loginSchema } from "@workspace/db";
-import { eq, or } from "drizzle-orm";
+import { db, users, resumes, jobApplications, registerSchema, loginSchema } from "@workspace/db";
+import { eq, or, desc } from "drizzle-orm";
 
 const router = Router();
 
@@ -310,6 +310,80 @@ router.get("/auth/google/callback", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Google OAuth callback error");
     res.redirect(`${process.env["APP_URL"] ?? ""}/login?error=oauth_failed`);
+  }
+});
+
+router.get("/auth/export-data", async (req, res) => {
+  if (!req.session?.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  try {
+    const userId = req.session.userId;
+
+    const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+    if (!user) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    const userResumes = await db
+      .select()
+      .from(resumes)
+      .where(eq(resumes.userId, userId))
+      .orderBy(desc(resumes.createdAt));
+
+    const userJobApplications = await db
+      .select()
+      .from(jobApplications)
+      .where(eq(jobApplications.userId, userId))
+      .orderBy(desc(jobApplications.createdAt));
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      profile: {
+        id: user.id,
+        email: user.email,
+        name: user.name ?? null,
+        phone: user.phone ?? null,
+        plan: user.plan,
+        lifetimeAccess: user.lifetimeAccess,
+        createdAt: user.createdAt,
+      },
+      resumes: userResumes,
+      jobApplications: userJobApplications,
+    };
+
+    res.setHeader("Content-Disposition", 'attachment; filename="careercraft-data.json"');
+    res.setHeader("Content-Type", "application/json");
+    res.json(payload);
+  } catch (err) {
+    req.log.error({ err }, "Export data error");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.delete("/auth/account", async (req, res) => {
+  if (!req.session?.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  try {
+    const userId = req.session.userId;
+
+    await db.delete(jobApplications).where(eq(jobApplications.userId, userId));
+    await db.delete(resumes).where(eq(resumes.userId, userId));
+
+    req.session.destroy(() => {});
+
+    await db.delete(users).where(eq(users.id, userId));
+
+    res.json({ ok: true, message: "Account deleted successfully." });
+  } catch (err) {
+    req.log.error({ err }, "Account deletion error");
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

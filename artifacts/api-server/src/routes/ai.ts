@@ -586,16 +586,16 @@ router.post("/ai/skills-gap", aiHelperLimiter, async (req, res) => {
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: unknown;
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
     } catch {
-      res.status(500).json({ error: "Failed to parse AI response" });
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
       return;
     }
 
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI skills-gap error");
     const userMessage =
@@ -686,16 +686,16 @@ Rules:
       ],
     });
 
-    const raw = completion.choices[0]?.message?.content ?? "{}";
-    let parsed: unknown;
+    let result: Record<string, unknown>;
     try {
-      parsed = JSON.parse(raw);
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
     } catch {
-      res.status(500).json({ error: "Failed to parse profile" });
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
       return;
     }
 
-    res.json(parsed);
+    res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI import-linkedin error");
     const userMessage =

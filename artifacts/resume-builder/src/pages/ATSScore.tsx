@@ -165,7 +165,7 @@ function ATSMatchTab() {
                 {result.foundKeywords.length === 0 ? (
                   <p className="text-xs text-muted-foreground italic">No matching keywords detected.</p>
                 ) : (
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-2">
                     {result.foundKeywords.map((kw) => (
                       <Badge
                         key={kw}
@@ -190,7 +190,7 @@ function ATSMatchTab() {
                 {result.missingKeywords.length === 0 ? (
                   <p className="text-xs text-muted-foreground italic">Great — no critical keywords missing!</p>
                 ) : (
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-2">
                     {result.missingKeywords.map((kw) => (
                       <Badge
                         key={kw}

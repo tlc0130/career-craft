@@ -36,7 +36,7 @@ export default function TemplateSelector({ selectedId, onSelect, data }: Props) 
   return (
     <div>
       {/* Category filter row */}
-      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
+      <div className="flex flex-wrap gap-2 mb-5">
         {CATEGORIES.map((cat) => (
           <button
             key={cat}
@@ -53,13 +53,7 @@ export default function TemplateSelector({ selectedId, onSelect, data }: Props) 
       </div>
 
       {/* Template grid */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-          gap: '16px',
-        }}
-      >
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {filtered.map((template) => {
           const isSelected = template.id === selectedId;
           return (
@@ -91,7 +85,7 @@ export default function TemplateSelector({ selectedId, onSelect, data }: Props) 
                 {/* Scaled preview thumbnail */}
                 <div
                   style={{
-                    width: '143px',
+                    width: '100%',
                     height: `${PREVIEW_HEIGHT}px`,
                     overflow: 'hidden',
                     position: 'relative',

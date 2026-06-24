@@ -231,7 +231,7 @@ export default function InterviewPrep() {
                     <ol className="space-y-5">
                       {category.questions.map((item, idx) => (
                         <li key={idx} className="space-y-1.5">
-                          <p className="font-semibold text-sm text-foreground leading-snug">
+                          <p className="font-semibold text-sm text-foreground leading-snug break-words">
                             {idx + 1}. {item.question}
                           </p>
                           {item.tip && (

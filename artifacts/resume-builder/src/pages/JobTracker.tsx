@@ -365,12 +365,13 @@ export default function JobTracker() {
           )}
 
           {/* Kanban board */}
-          <div className="overflow-x-auto pb-4">
-            <div className="flex gap-4 min-w-max">
+          <p className="text-xs text-muted-foreground mb-2 sm:hidden">← Scroll to see all columns</p>
+          <div className="overflow-x-auto -mx-4 px-4 pb-2">
+            <div className="flex gap-4 min-w-max lg:min-w-0 lg:grid lg:grid-cols-7">
               {STATUSES.map((statusDef) => {
                 const columnJobs = jobsByStatus[statusDef.key];
                 return (
-                  <div key={statusDef.key} className="w-64 flex flex-col gap-3 shrink-0">
+                  <div key={statusDef.key} className="min-w-[240px] lg:min-w-0 flex flex-col gap-3 shrink-0">
                     {/* Column header */}
                     <div
                       className={`flex items-center justify-between px-3 py-2 rounded-lg ${statusDef.headerClass}`}
