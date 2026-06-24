@@ -44,6 +44,10 @@ interface JobApplication {
   appliedAt?: string;
   createdAt: string;
   updatedAt: string;
+  salary?: number;
+  contactName?: string;
+  contactEmail?: string;
+  followUpDate?: string;
 }
 
 type Status = JobApplication["status"];
@@ -127,6 +131,10 @@ const EMPTY_FORM = {
   status: "saved" as Status,
   notes: "",
   appliedAt: "",
+  salary: "",
+  contactName: "",
+  contactEmail: "",
+  followUpDate: "",
 };
 
 export default function JobTracker() {
@@ -143,6 +151,7 @@ export default function JobTracker() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<JobApplication | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
 
   useEffect(() => {
     if (authLoading) return;
@@ -169,6 +178,7 @@ export default function JobTracker() {
   function openAddDialog() {
     setEditingJob(null);
     setForm({ ...EMPTY_FORM });
+    setShowMoreDetails(false);
     setDialogOpen(true);
   }
 
@@ -181,7 +191,13 @@ export default function JobTracker() {
       status: job.status,
       notes: job.notes ?? "",
       appliedAt: job.appliedAt ? job.appliedAt.slice(0, 10) : "",
+      salary: job.salary != null ? String(job.salary) : "",
+      contactName: job.contactName ?? "",
+      contactEmail: job.contactEmail ?? "",
+      followUpDate: job.followUpDate ? job.followUpDate.slice(0, 10) : "",
     });
+    const hasExtra = !!(job.salary || job.contactName || job.contactEmail || job.followUpDate);
+    setShowMoreDetails(hasExtra);
     setDialogOpen(true);
   }
 
@@ -189,6 +205,7 @@ export default function JobTracker() {
     setDialogOpen(false);
     setEditingJob(null);
     setForm({ ...EMPTY_FORM });
+    setShowMoreDetails(false);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -197,7 +214,7 @@ export default function JobTracker() {
 
     setSubmitting(true);
     try {
-      const payload: Record<string, string> = {
+      const payload: Record<string, string | number> = {
         company: form.company.trim(),
         jobTitle: form.jobTitle.trim(),
         status: form.status,
@@ -205,6 +222,10 @@ export default function JobTracker() {
       if (form.jobUrl.trim()) payload.jobUrl = form.jobUrl.trim();
       if (form.notes.trim()) payload.notes = form.notes.trim();
       if (form.appliedAt) payload.appliedAt = new Date(form.appliedAt).toISOString();
+      if (form.salary.trim()) payload.salary = parseInt(form.salary.trim(), 10);
+      if (form.contactName.trim()) payload.contactName = form.contactName.trim();
+      if (form.contactEmail.trim()) payload.contactEmail = form.contactEmail.trim();
+      if (form.followUpDate) payload.followUpDate = new Date(form.followUpDate).toISOString();
 
       if (editingJob) {
         const res = await fetch(`/api/jobs/${editingJob.id}`, {

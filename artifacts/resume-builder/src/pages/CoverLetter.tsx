@@ -75,6 +75,7 @@ export default function CoverLetter() {
   const [jobDescription, setJobDescription] = useState("");
   const [coverLetterText, setCoverLetterText] = useState("");
   const [jobContext, setJobContext] = useState<JobContext | null>(null);
+  const [tone, setTone] = useState<"professional" | "conversational" | "creative" | "executive">("professional");
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
@@ -106,6 +107,7 @@ export default function CoverLetter() {
         formData.append("resumeText", resumeInput.text);
       }
       formData.append("jobDescription", jobDescription);
+      formData.append("tone", tone);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -228,10 +230,31 @@ export default function CoverLetter() {
                   />
                 </div>
                 {step === "input" && (
-                  <div className="flex justify-end mt-4">
-                    <Button onClick={handleNext} disabled={!jobDescription} className="gap-2">
-                      Generate Cover Letter <Sparkles className="w-4 h-4" />
-                    </Button>
+                  <div className="mt-4 space-y-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Writing Style:</label>
+                      <div className="flex flex-wrap gap-2">
+                        {(["professional", "conversational", "creative", "executive"] as const).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => setTone(t)}
+                            className={`px-3 py-1 text-xs rounded-full border transition-colors capitalize ${
+                              tone === t
+                                ? "border-primary bg-primary/10 text-primary font-medium ring-1 ring-primary"
+                                : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                            }`}
+                          >
+                            {t}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <Button onClick={handleNext} disabled={!jobDescription} className="gap-2">
+                        Generate Cover Letter <Sparkles className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
