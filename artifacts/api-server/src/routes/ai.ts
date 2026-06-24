@@ -604,6 +604,106 @@ router.post("/ai/skills-gap", async (req, res) => {
   }
 });
 
+router.post("/ai/import-linkedin", async (req, res) => {
+  try {
+    if (!req.session?.userId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    const profileText = (req.body as { profileText?: string }).profileText ?? "";
+
+    if (!profileText.trim()) {
+      res.status(400).json({ error: "profileText is required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 2000,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional resume parser. Extract structured resume data from LinkedIn profile text. Return ONLY valid JSON matching the exact schema provided.",
+        },
+        {
+          role: "user",
+          content: `Parse this LinkedIn profile text into a structured resume. LinkedIn text: ${profileText}
+
+Return this exact JSON structure (all fields optional except where shown):
+{
+  "contact": {
+    "firstName": string,
+    "lastName": string,
+    "title": string,
+    "email": "",
+    "phone": "",
+    "summary": string,
+    "location": string,
+    "linkedin": string
+  },
+  "experience": [
+    {
+      "id": "exp-1",
+      "jobTitle": string,
+      "company": string,
+      "startDate": string,
+      "endDate": string,
+      "description": string
+    }
+  ],
+  "education": [
+    {
+      "id": "edu-1",
+      "school": string,
+      "degree": string,
+      "startYear": string,
+      "endYear": string
+    }
+  ],
+  "skills": [string]
+}
+
+Rules:
+- firstName/lastName: split the full name
+- title: their current or most recent job title
+- summary: the About section text
+- location: city/region if mentioned
+- linkedin: leave empty string (user will fill in)
+- email/phone: always empty string (not on LinkedIn)
+- For experience: list most recent first, use "Present" for current role endDate
+- For education: degree should include field of study
+- startDate/endDate format: "YYYY-MM" or "YYYY" or "Present"
+- Skills: extract from Skills section, max 20
+- Generate unique ids like "exp-1", "exp-2", "edu-1", "edu-2"
+- If a section has no data, return empty array`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Failed to parse profile" });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err: any) {
+    req.log.error({ err }, "AI import-linkedin error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
 router.get("/ai/usage", async (req, res) => {
   try {
     const usage = await getUsage(req.session.userId!);

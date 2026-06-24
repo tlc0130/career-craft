@@ -6,7 +6,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2, Download, FileText, Wand2 } from "lucide-react";
+import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2, Download, FileText, Wand2, Linkedin } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import TemplateSelector from "@/components/TemplateSelector";
@@ -83,6 +91,12 @@ export default function Builder() {
   const [summaryError, setSummaryError] = useState("");
   const [generatingBullets, setGeneratingBullets] = useState<Record<string, boolean>>({});
   const [bulletsErrors, setBulletsErrors] = useState<Record<string, string>>({});
+
+  const [showLinkedInImport, setShowLinkedInImport] = useState(false);
+  const [linkedInText, setLinkedInText] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [importSuccess, setImportSuccess] = useState(false);
 
   const [experiences, setExperiences] = useState<Experience[]>([makeEmptyExperience()]);
   const [education, setEducation] = useState<Education[]>([makeEmptyEducation()]);
@@ -405,6 +419,53 @@ export default function Builder() {
     printResume(selectedTemplateId, content, resumeTitle);
   }
 
+  async function handleLinkedInImport() {
+    if (!linkedInText.trim()) return;
+    setImporting(true);
+    setImportError('');
+    try {
+      const res = await fetch('/api/ai/import-linkedin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ profileText: linkedInText }),
+      });
+      if (!res.ok) throw new Error('Import failed');
+      const imported = await res.json();
+      // Merge: preserve existing email/phone if already filled in
+      setContact((prev) => ({
+        firstName: imported.contact?.firstName ?? prev.firstName,
+        lastName: imported.contact?.lastName ?? prev.lastName,
+        title: imported.contact?.title ?? prev.title,
+        email: prev.email || imported.contact?.email || '',
+        phone: prev.phone || imported.contact?.phone || '',
+        summary: imported.contact?.summary ?? prev.summary,
+        location: imported.contact?.location ?? prev.location,
+        linkedin: imported.contact?.linkedin ?? prev.linkedin,
+        website: prev.website,
+      }));
+      if (Array.isArray(imported.experience) && imported.experience.length > 0) {
+        setExperiences(imported.experience);
+      }
+      if (Array.isArray(imported.education) && imported.education.length > 0) {
+        setEducation(imported.education);
+      }
+      if (Array.isArray(imported.skills) && imported.skills.length > 0) {
+        setSkills(imported.skills);
+      }
+      markDirty();
+      setShowLinkedInImport(false);
+      setLinkedInText('');
+      setImportSuccess(true);
+      setActiveTab('contact');
+      setTimeout(() => setImportSuccess(false), 5000);
+    } catch (err) {
+      setImportError('Import failed. Please try again or paste more complete profile text.');
+    } finally {
+      setImporting(false);
+    }
+  }
+
   if (loadingResume) {
     return (
       <Layout>
@@ -441,11 +502,78 @@ export default function Builder() {
                 : "Build a professional resume from scratch using our guided wizard."}
             </p>
           </div>
-          <Button className="gap-2 shrink-0" onClick={handleSave} disabled={saving}>
-            <Save className="w-4 h-4" />
-            {saving ? (isEditing ? "Updating…" : "Saving…") : saveLabel}
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button variant="outline" className="gap-2" onClick={() => setShowLinkedInImport(true)}>
+              <Linkedin className="w-4 h-4" />
+              Import from LinkedIn
+            </Button>
+            <Button className="gap-2" onClick={handleSave} disabled={saving}>
+              <Save className="w-4 h-4" />
+              {saving ? (isEditing ? "Updating…" : "Saving…") : saveLabel}
+            </Button>
+          </div>
         </div>
+
+        {importSuccess && (
+          <div className="mb-4 p-3 rounded-lg border border-green-500/20 bg-green-500/10 text-sm text-green-700 dark:text-green-400">
+            Profile imported! Review and edit the fields below.
+          </div>
+        )}
+
+        <Dialog open={showLinkedInImport} onOpenChange={(open) => { setShowLinkedInImport(open); if (!open) { setLinkedInText(''); setImportError(''); } }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Linkedin className="w-5 h-5 text-[#0A66C2]" />
+                Import from LinkedIn
+              </DialogTitle>
+              <DialogDescription>
+                Copy your LinkedIn profile and paste it below. We'll extract your experience, education, and skills automatically.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 p-3 text-sm text-blue-800 dark:text-blue-300 space-y-1">
+                <p className="font-medium">How to copy your LinkedIn profile:</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-blue-700 dark:text-blue-400">
+                  <li>Go to your LinkedIn profile page</li>
+                  <li>Select all text on the page (Ctrl+A / Cmd+A)</li>
+                  <li>Copy (Ctrl+C / Cmd+C)</li>
+                  <li>Paste below</li>
+                </ol>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="linkedinText">LinkedIn Profile Text</Label>
+                <Textarea
+                  id="linkedinText"
+                  className="min-h-[160px]"
+                  placeholder="Paste your LinkedIn profile text here..."
+                  value={linkedInText}
+                  onChange={(e) => setLinkedInText(e.target.value)}
+                />
+              </div>
+              {importError && (
+                <p className="text-sm text-destructive">{importError}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowLinkedInImport(false); setLinkedInText(''); setImportError(''); }}
+                  disabled={importing}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleLinkedInImport}
+                  disabled={importing || !linkedInText.trim()}
+                  className="gap-2"
+                >
+                  {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Linkedin className="w-4 h-4" />}
+                  {importing ? 'Importing...' : 'Import Profile'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {!user && (
           <div className="mb-6 p-4 rounded-lg border border-primary/20 bg-primary/5 text-sm text-muted-foreground flex items-center gap-3">
