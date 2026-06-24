@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, integer, jsonb, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { boolean, date, integer, jsonb, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -74,6 +74,10 @@ export const jobApplications = pgTable("job_applications", {
   // status values: 'saved' | 'applied' | 'phone_screen' | 'interview' | 'offer' | 'rejected' | 'withdrawn'
   notes: text("notes"),
   appliedAt: timestamp("applied_at"),
+  salary: integer("salary"),
+  contactName: text("contact_name"),
+  contactEmail: text("contact_email"),
+  followUpDate: date("follow_up_date"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

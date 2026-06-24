@@ -2,10 +2,267 @@ import { useState, useEffect } from "react";
 import Layout from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Plus, Sparkles, FileText, CheckCircle2, Target, Zap, ShieldCheck, X, BarChart2, Briefcase } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth, startCheckout } from "@/lib/auth";
 import generatedImage from '@assets/generated_images/abstract_3d_documents_tailored_resume_concept.png';
+
+// ---------------------------------------------------------------------------
+// Stats types
+// ---------------------------------------------------------------------------
+interface StatsData {
+  resumeCount: number;
+  totalJobs: number;
+  creditsUsed: number;
+  creditsLimit: number;
+  isPro: boolean;
+  jobsByStatus: Record<string, number>;
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard skeleton
+// ---------------------------------------------------------------------------
+function DashboardSkeleton() {
+  return (
+    <div className="space-y-6 animate-pulse">
+      <div className="h-8 w-64 bg-muted rounded-lg" />
+      <div className="h-4 w-48 bg-muted rounded" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-28 bg-muted rounded-xl" />
+        ))}
+      </div>
+      <div className="h-24 bg-muted rounded-xl" />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Personalized dashboard (shown when user is logged in)
+// ---------------------------------------------------------------------------
+function PersonalizedDashboard({ userName }: { userName: string }) {
+  const [stats, setStats] = useState<StatsData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/stats", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setStats(data))
+      .catch(() => setStats(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <DashboardSkeleton />;
+
+  const pipelineStages = ["saved", "applied", "phone_screen", "interview", "offer"];
+  const pipelineLabels: Record<string, string> = {
+    saved: "Saved",
+    applied: "Applied",
+    phone_screen: "Phone Screen",
+    interview: "Interview",
+    offer: "Offer",
+  };
+
+  const jobsByStatus = stats?.jobsByStatus ?? {};
+  const inPipeline = stats
+    ? Object.entries(jobsByStatus)
+        .filter(([status]) => !["rejected", "withdrawn"].includes(status))
+        .reduce((acc, [, count]) => acc + count, 0)
+    : 0;
+
+  const creditsUsed = stats?.creditsUsed ?? 0;
+  const creditsLimit = stats?.creditsLimit ?? 5;
+  const isPro = stats?.isPro ?? false;
+  const resumeCount = stats?.resumeCount ?? 0;
+  const totalJobs = stats?.totalJobs ?? 0;
+  const creditPct = isPro ? 0 : Math.round((creditsUsed / creditsLimit) * 100);
+
+  const creditColor =
+    isPro
+      ? "text-green-400"
+      : creditPct >= 100
+      ? "text-red-400"
+      : creditPct >= 80
+      ? "text-amber-400"
+      : "text-green-400";
+
+  const allZero = resumeCount === 0 && totalJobs === 0 && creditsUsed === 0;
+
+  const subtitle = allZero
+    ? "Let's get your job search started!"
+    : `You have ${inPipeline} active application${inPipeline !== 1 ? "s" : ""} in your pipeline.`;
+
+  const statCards = [
+    {
+      label: "Resumes Saved",
+      value: resumeCount,
+      icon: FileText,
+      href: "/my-resumes",
+      color: "text-primary",
+      bg: "bg-primary/10",
+    },
+    {
+      label: "Jobs Tracked",
+      value: totalJobs,
+      icon: Briefcase,
+      href: "/job-tracker",
+      color: "text-blue-400",
+      bg: "bg-blue-500/10",
+    },
+    {
+      label: "AI Credits",
+      value: isPro ? "∞" : `${creditsUsed} / ${creditsLimit} used`,
+      icon: Zap,
+      href: null,
+      color: creditColor,
+      bg: "bg-muted",
+    },
+    {
+      label: "In Pipeline",
+      value: inPipeline,
+      icon: Target,
+      href: "/job-tracker",
+      color: "text-purple-400",
+      bg: "bg-purple-500/10",
+    },
+  ];
+
+  const quickActions = [
+    { label: "+ New Resume", href: "/builder" },
+    { label: "Tailor Resume", href: "/tailor" },
+    { label: "Score Resume", href: "/ats-score" },
+    { label: "Track Job", href: "/job-tracker" },
+  ];
+
+  const gettingStartedItems = [
+    { label: "Build your resume", href: "/builder", done: resumeCount > 0 },
+    { label: "Tailor for a job", href: "/tailor", done: false },
+    { label: "Check your ATS score", href: "/ats-score", done: false },
+    { label: "Track your first application", href: "/job-tracker", done: totalJobs > 0 },
+    { label: "Generate a cover letter", href: "/cover-letter", done: false },
+  ];
+
+  return (
+    <div className="space-y-6 mb-10">
+      {/* Welcome header */}
+      <div>
+        <h2 className="text-2xl md:text-3xl font-display font-bold">
+          Welcome back, {userName}!
+        </h2>
+        <p className="text-muted-foreground mt-1">{subtitle}</p>
+      </div>
+
+      {allZero ? (
+        /* Getting Started checklist */
+        <Card className="bg-card border-primary/20">
+          <CardHeader>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              Getting Started
+            </CardTitle>
+            <CardDescription>Complete these steps to kick off your job search</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-3">
+              {gettingStartedItems.map((item) => (
+                <li key={item.href} className="flex items-center gap-3">
+                  <div
+                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                      item.done
+                        ? "border-primary bg-primary"
+                        : "border-muted-foreground/40"
+                    }`}
+                  >
+                    {item.done && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
+                  </div>
+                  <Link href={item.href}>
+                    <span
+                      className={`text-sm hover:text-primary transition-colors cursor-pointer ${
+                        item.done ? "line-through text-muted-foreground" : "text-foreground"
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : (
+        /* Stat cards grid */
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {statCards.map((card) => {
+            const Icon = card.icon;
+            const inner = (
+              <Card className="bg-card border-border/50 hover:border-primary/30 transition-all cursor-pointer">
+                <CardContent className="pt-5 pb-4">
+                  <div className={`w-9 h-9 rounded-lg ${card.bg} flex items-center justify-center mb-3`}>
+                    <Icon className={`w-5 h-5 ${card.color}`} />
+                  </div>
+                  <p className="text-xs text-muted-foreground font-medium mb-1">{card.label}</p>
+                  <p className={`text-2xl font-bold font-display ${card.color}`}>
+                    {card.value}
+                  </p>
+                </CardContent>
+              </Card>
+            );
+            return card.href ? (
+              <Link key={card.label} href={card.href}>
+                {inner}
+              </Link>
+            ) : (
+              <div key={card.label}>{inner}</div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Quick Actions */}
+      <div>
+        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+          Quick Actions
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          {quickActions.map((action) => (
+            <Link key={action.href} href={action.href}>
+              <Button variant="outline" size="sm" className="border-border/60 hover:border-primary/50 hover:text-primary">
+                {action.label}
+              </Button>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* Pipeline summary (only when user has jobs) */}
+      {!allZero && totalJobs > 0 && (
+        <Card className="bg-card border-border/50">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold">Pipeline Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              {pipelineStages.map((stage) => {
+                const count = jobsByStatus[stage] ?? 0;
+                const pct = totalJobs > 0 ? Math.round((count / totalJobs) * 100) : 0;
+                return (
+                  <div key={stage} className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground w-24 shrink-0">
+                      {pipelineLabels[stage]}
+                    </span>
+                    <Progress value={pct} className="h-2 flex-1" />
+                    <span className="text-xs font-medium w-6 text-right">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 export default function Home() {
   const { user, loading: authLoading } = useAuth();
@@ -84,7 +341,14 @@ export default function Home() {
           </div>
         )}
 
-        {/* Hero Section */}
+        {/* Personalized Dashboard (logged-in users only) */}
+        {!authLoading && user && (
+          <PersonalizedDashboard
+            userName={user.name || user.email.split("@")[0]}
+          />
+        )}
+
+        {/* Hero Section (always shown) */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
           <div className="space-y-6">
             <div className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-sm font-medium text-primary">

@@ -128,4 +128,57 @@ router.get("/auth/me", async (req, res) => {
   }
 });
 
+router.put("/auth/me", async (req, res) => {
+  if (!req.session.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  const body = req.body as { name?: unknown; phone?: unknown };
+  const name = typeof body.name === "string" ? body.name : undefined;
+  const phone = typeof body.phone === "string" ? body.phone : undefined;
+
+  if (name !== undefined && name.length > 100) {
+    res.status(400).json({ error: "name must be 100 characters or fewer" });
+    return;
+  }
+  if (phone !== undefined && phone.length > 30) {
+    res.status(400).json({ error: "phone must be 30 characters or fewer" });
+    return;
+  }
+
+  if (name === undefined && phone === undefined) {
+    res.status(400).json({ error: "At least one of name or phone must be provided" });
+    return;
+  }
+
+  try {
+    const [updated] = await db
+      .update(users)
+      .set({
+        ...(name !== undefined ? { name } : {}),
+        ...(phone !== undefined ? { phone } : {}),
+      })
+      .where(eq(users.id, req.session.userId))
+      .returning();
+
+    if (!updated) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    res.json({
+      id: updated.id,
+      email: updated.email,
+      name: updated.name ?? null,
+      phone: updated.phone ?? null,
+      plan: updated.plan,
+      lifetimeAccess: updated.lifetimeAccess,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Auth me update error");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 export default router;

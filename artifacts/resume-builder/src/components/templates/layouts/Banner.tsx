@@ -99,6 +99,15 @@ export default function Banner({ data, theme }: TemplateProps) {
         <p style={{ fontSize: '9pt', color: `${theme.accentFg}bb`, margin: 0, letterSpacing: '0.02em' }}>
           {[contact.email, contact.phone].filter(Boolean).join('   |   ')}
         </p>
+        {(contact.location || contact.linkedin || contact.website) && (
+          <p style={{ fontSize: '9pt', color: `${theme.accentFg}99`, margin: '4px 0 0 0', letterSpacing: '0.02em' }}>
+            {[
+              contact.location ? `📍 ${contact.location}` : null,
+              contact.linkedin ? `🔗 ${contact.linkedin}` : null,
+              contact.website ? `🌐 ${contact.website}` : null,
+            ].filter(Boolean).join('   |   ')}
+          </p>
+        )}
       </div>
 
       {/* Body */}

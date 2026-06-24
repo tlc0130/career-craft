@@ -6,6 +6,9 @@ export interface ResumeContent {
     email: string;
     phone: string;
     summary: string;
+    location?: string;    // e.g. "San Francisco, CA"
+    linkedin?: string;    // e.g. "linkedin.com/in/username"
+    website?: string;     // e.g. "portfolio.dev"
   };
   experience: {
     id: string;

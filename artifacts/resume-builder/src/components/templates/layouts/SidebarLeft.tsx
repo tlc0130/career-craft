@@ -125,6 +125,15 @@ export default function SidebarLeft({ data, theme }: TemplateProps) {
           {contact.phone && (
             <p style={{ fontSize: '8.5pt', color: theme.accentFg, margin: '0 0 5px 0', lineHeight: 1.3 }}>{contact.phone}</p>
           )}
+          {contact.location && (
+            <p style={{ fontSize: '8.5pt', color: theme.accentFg, margin: '0 0 5px 0', lineHeight: 1.3 }}>📍 {contact.location}</p>
+          )}
+          {contact.linkedin && (
+            <p style={{ fontSize: '8.5pt', color: theme.accentFg, margin: '0 0 5px 0', wordBreak: 'break-all', lineHeight: 1.3 }}>🔗 {contact.linkedin}</p>
+          )}
+          {contact.website && (
+            <p style={{ fontSize: '8.5pt', color: theme.accentFg, margin: '0 0 5px 0', wordBreak: 'break-all', lineHeight: 1.3 }}>🌐 {contact.website}</p>
+          )}
         </div>
 
         {/* Skills */}

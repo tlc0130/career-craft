@@ -177,6 +177,10 @@ router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
     }
 
     const jobDescription = (req.body as { jobDescription?: string }).jobDescription ?? "";
+    const toneRaw = (req.body as { tone?: string }).tone ?? "professional";
+    const validTones = ["professional", "conversational", "creative", "executive"] as const;
+    type Tone = (typeof validTones)[number];
+    const tone: Tone = (validTones as readonly string[]).includes(toneRaw) ? (toneRaw as Tone) : "professional";
 
     if (!resumeText || !jobDescription) {
       res.status(400).json({ error: "resumeText and jobDescription are required" });
@@ -214,7 +218,7 @@ The cover letter should:
 5. Close with a confident call to action
 6. Be 3-4 paragraphs, professional but warm in tone
 
-Return ONLY the cover letter body text (no address block, no date, no signature line). Start directly with "Dear Hiring Manager," and end after the closing paragraph. Do not include any commentary.`,
+Return ONLY the cover letter body text (no address block, no date, no signature line). Start directly with "Dear Hiring Manager," and end after the closing paragraph. Do not include any commentary. Write in a ${tone} tone.`,
           },
           {
             role: "user",
@@ -397,6 +401,199 @@ Return ONLY the JSON object, no commentary.`,
     res.json(parsed);
   } catch (err: any) {
     req.log.error({ err }, "AI resume-score error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
+router.post("/ai/generate-summary", async (req, res) => {
+  try {
+    const jobTitle = (req.body as { jobTitle?: string }).jobTitle ?? "";
+    const experienceSnippets = (req.body as { experienceSnippets?: string }).experienceSnippets ?? "";
+
+    if (!jobTitle || !experienceSnippets) {
+      res.status(400).json({ error: "jobTitle and experienceSnippets are required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 200,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional resume writer. Return ONLY valid JSON with one field.",
+        },
+        {
+          role: "user",
+          content: `Write a compelling 2-3 sentence professional summary for someone whose title is: ${jobTitle}. Their experience includes: ${experienceSnippets}. Make it achievement-focused and ATS-friendly. Return JSON: {"summary": "..."}`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Failed to parse AI response" });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err: any) {
+    req.log.error({ err }, "AI generate-summary error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
+router.post("/ai/generate-bullets", async (req, res) => {
+  try {
+    const jobTitle = (req.body as { jobTitle?: string }).jobTitle ?? "";
+    const company = (req.body as { company?: string }).company ?? "";
+    const roleDescription = (req.body as { roleDescription?: string }).roleDescription ?? "";
+
+    if (!jobTitle || !company || !roleDescription) {
+      res.status(400).json({ error: "jobTitle, company, and roleDescription are required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 300,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional resume writer. Return ONLY valid JSON with one field.",
+        },
+        {
+          role: "user",
+          content: `Convert these raw notes into 3-4 strong resume bullet points for a ${jobTitle} role at ${company}. Raw notes: ${roleDescription}. Each bullet should start with a strong action verb and include quantifiable results where possible. Return JSON: {"bullets": ["bullet 1", "bullet 2", ...]}`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Failed to parse AI response" });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err: any) {
+    req.log.error({ err }, "AI generate-bullets error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
+router.post("/ai/interview-prep", async (req, res) => {
+  try {
+    const jobDescription = (req.body as { jobDescription?: string }).jobDescription ?? "";
+    const resumeText = (req.body as { resumeText?: string }).resumeText;
+
+    if (!jobDescription) {
+      res.status(400).json({ error: "jobDescription is required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 1200,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional career coach helping candidates prepare for job interviews. Return ONLY valid JSON.",
+        },
+        {
+          role: "user",
+          content: `Generate interview preparation questions for this job: ${jobDescription}. ${resumeText ? "Candidate resume: " + resumeText : ""} Return exactly this JSON structure: {"categories": [{"name": string, "questions": [{"question": string, "tip": string}]}]}. Include 5 categories: 'Behavioral', 'Technical & Role-Specific', 'Company & Culture', 'Situational', 'Questions to Ask'. Include 3-4 questions per category with a brief answering tip for each.`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Failed to parse AI response" });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err: any) {
+    req.log.error({ err }, "AI interview-prep error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
+router.post("/ai/skills-gap", async (req, res) => {
+  try {
+    const resumeText = (req.body as { resumeText?: string }).resumeText ?? "";
+    const jobDescription = (req.body as { jobDescription?: string }).jobDescription ?? "";
+
+    if (!resumeText || !jobDescription) {
+      res.status(400).json({ error: "resumeText and jobDescription are required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 600,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a career development coach. Return ONLY valid JSON.",
+        },
+        {
+          role: "user",
+          content: `Analyze the gap between this candidate's resume and the job description. Resume: ${resumeText}. Job: ${jobDescription}. Return JSON: {"hasSkills": [string], "missingTechnical": [string], "missingSoft": [string], "prioritySkill": string, "learningPath": [{"skill": string, "how": string}]}. missingTechnical should list up to 6 hard/technical skills. missingSoft should list up to 4 soft skills. learningPath should give 3-4 specific, actionable ways to gain the top missing skills.`,
+        },
+      ],
+    });
+
+    const raw = completion.choices[0]?.message?.content ?? "{}";
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      res.status(500).json({ error: "Failed to parse AI response" });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err: any) {
+    req.log.error({ err }, "AI skills-gap error");
     const userMessage =
       err?.status === 429
         ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
