@@ -6,7 +6,8 @@ import { z } from "zod/v4";
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
+  passwordHash: text("password_hash"),
+  googleId: text("google_id").unique(),
   name: text("name"),
   phone: text("phone"),
   plan: text("plan").notNull().default("starter"),
@@ -23,6 +24,7 @@ export const users = pgTable("users", {
 export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
   passwordHash: true,
+  googleId: true,
 });
 
 export const registerSchema = z.object({

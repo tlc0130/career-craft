@@ -1,7 +1,8 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
 import { db, users, registerSchema, loginSchema } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 
 const router = Router();
 
@@ -61,6 +62,12 @@ router.post("/auth/login", async (req, res) => {
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     if (!user) {
       res.status(401).json({ error: "Invalid email or password" });
+      return;
+    }
+
+    if (!user.passwordHash) {
+      // Google-only account — no password set
+      res.status(401).json({ error: "This account uses Google sign-in. Please continue with Google." });
       return;
     }
 
@@ -178,6 +185,130 @@ router.put("/auth/me", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Auth me update error");
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+router.get("/auth/google", (req, res) => {
+  const clientId = process.env["GOOGLE_CLIENT_ID"];
+  const appUrl = process.env["APP_URL"] ?? "";
+
+  if (!clientId) {
+    res.status(501).json({ error: "Google login not configured" });
+    return;
+  }
+
+  const state = crypto.randomBytes(16).toString("hex");
+  req.session.oauthState = state;
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: `${appUrl}/api/auth/google/callback`,
+    response_type: "code",
+    scope: "openid email profile",
+    state,
+    access_type: "offline",
+    prompt: "select_account",
+  });
+
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+router.get("/auth/google/callback", async (req, res) => {
+  const appUrl = process.env["APP_URL"] ?? "";
+
+  try {
+    const { state, error: oauthError, code } = req.query as Record<string, string>;
+
+    if (state !== req.session.oauthState) {
+      res.redirect(`${appUrl}/login?error=oauth_state`);
+      return;
+    }
+
+    if (oauthError) {
+      res.redirect(`${appUrl}/login?error=oauth_denied`);
+      return;
+    }
+
+    // Exchange code for tokens
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: process.env["GOOGLE_CLIENT_ID"] ?? "",
+        client_secret: process.env["GOOGLE_CLIENT_SECRET"] ?? "",
+        redirect_uri: `${appUrl}/api/auth/google/callback`,
+        code,
+        grant_type: "authorization_code",
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const body = await tokenRes.text();
+      req.log.error({ status: tokenRes.status, body }, "Google token exchange failed");
+      res.redirect(`${appUrl}/login?error=oauth_failed`);
+      return;
+    }
+
+    const tokenData = await tokenRes.json() as { access_token: string };
+
+    // Fetch user profile
+    const profileRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!profileRes.ok) {
+      req.log.error({ status: profileRes.status }, "Google userinfo fetch failed");
+      res.redirect(`${appUrl}/login?error=oauth_failed`);
+      return;
+    }
+
+    const profile = await profileRes.json() as {
+      sub: string;
+      email: string;
+      name?: string;
+      email_verified?: boolean;
+    };
+
+    // Look up user by googleId or email
+    const existing = await db
+      .select()
+      .from(users)
+      .where(or(eq(users.googleId, profile.sub), eq(users.email, profile.email)))
+      .limit(1);
+
+    let user = existing[0];
+
+    if (user) {
+      if (!user.googleId) {
+        // Existing email account — link Google ID
+        const [updated] = await db
+          .update(users)
+          .set({ googleId: profile.sub })
+          .where(eq(users.id, user.id))
+          .returning();
+        user = updated;
+      }
+      // else: already linked, just log in
+    } else {
+      // New user via Google
+      const [created] = await db
+        .insert(users)
+        .values({
+          email: profile.email,
+          name: profile.name ?? null,
+          googleId: profile.sub,
+          passwordHash: null,
+          plan: "starter",
+        })
+        .returning();
+      user = created;
+    }
+
+    req.session.userId = user.id;
+    res.redirect(`${appUrl}/`);
+  } catch (err) {
+    req.log.error({ err }, "Google OAuth callback error");
+    res.redirect(`${process.env["APP_URL"] ?? ""}/login?error=oauth_failed`);
   }
 });
 
