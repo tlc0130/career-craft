@@ -3,8 +3,9 @@ import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { ResumeInput, ResumeInputValue } from "@/components/ResumeInput";
 import { JobPostingInput } from "@/components/JobPostingInput";
+import { DiffViewer } from "@/components/DiffViewer";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Sparkles, Copy, FileText, Save } from "lucide-react";
+import { ArrowRight, Sparkles, Copy, FileText, RefreshCw, GitCompare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useMutation } from "@tanstack/react-query";
@@ -75,18 +76,17 @@ export default function Tailor() {
   const [jobDescription, setJobDescription] = useState("");
   const [tailoredText, setTailoredText] = useState("");
   const [jobContext, setJobContext] = useState<JobContext | null>(null);
+  const [originalResumeText, setOriginalResumeText] = useState("");
+  const [showDiff, setShowDiff] = useState(false);
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
   const abortRef = useRef<AbortController | null>(null);
 
-  // The AI endpoints require a session. Send unauthenticated visitors to log in.
   useEffect(() => {
     if (!authLoading && !user) navigate("/login");
   }, [authLoading, user, navigate]);
 
-  // Cancel any in-flight stream when leaving the page so the server stops
-  // consuming OpenAI tokens.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   const hasResume = resumeInput !== null && (
@@ -139,16 +139,32 @@ export default function Tailor() {
     },
   });
 
+  const runTailor = () => {
+    setStep("processing");
+    setTailoredText("");
+    fetchJobContext(jobDescription).then(setJobContext);
+    tailorMutation.mutate();
+  };
+
   const handleNext = () => {
     if (step === "upload" && hasResume) {
       setStep("input");
     } else if (step === "input" && jobDescription) {
-      setStep("processing");
-      setTailoredText("");
+      // Capture original text for diff (available in text/saved mode)
+      if (resumeInput?.mode === "text") {
+        setOriginalResumeText(resumeInput.text);
+      } else {
+        setOriginalResumeText("");
+      }
       setJobContext(null);
-      fetchJobContext(jobDescription).then(setJobContext);
-      tailorMutation.mutate();
+      setShowDiff(false);
+      runTailor();
     }
+  };
+
+  const handleRetailor = () => {
+    setShowDiff(false);
+    runTailor();
   };
 
   const handleCopy = async () => {
@@ -171,6 +187,8 @@ export default function Tailor() {
       toast({ variant: "destructive", title: "Download failed", description: "Could not generate the PDF file." });
     }
   };
+
+  const canDiff = !!originalResumeText && !!tailoredText;
 
   return (
     <Layout>
@@ -217,18 +235,32 @@ export default function Tailor() {
             {(step === "input" || step === "processing" || step === "result") && (
               <div className="bg-card border border-border rounded-xl p-6 h-full flex flex-col animate-in fade-in slide-in-from-left-4">
                 <h2 className="text-lg font-semibold mb-4">
-                  {step === "result" ? "Job Description Used" : "Step 2: Job Details"}
+                  {step === "result" ? "Job Description" : "Step 2: Job Details"}
                 </h2>
                 <div className="flex-1 min-h-0">
                   <JobPostingInput
                     value={jobDescription}
                     onChange={setJobDescription}
+                    readOnly={step === "processing"}
                   />
                 </div>
                 {step === "input" && (
                   <div className="flex justify-end mt-4">
                     <Button onClick={handleNext} disabled={!jobDescription} className="gap-2">
                       Generate Tailored Resume <Sparkles className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+                {step === "result" && (
+                  <div className="flex justify-end mt-4">
+                    <Button
+                      onClick={handleRetailor}
+                      disabled={!jobDescription}
+                      variant="outline"
+                      className="gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Re-tailor with edits
                     </Button>
                   </div>
                 )}
@@ -256,23 +288,44 @@ export default function Tailor() {
               </div>
             ) : step === "result" ? (
               <div className="w-full h-full flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-semibold text-lg">Tailored Resume</h3>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" className="gap-2" onClick={handleCopy}>
-                      <Copy className="w-4 h-4" /> Copy Text
-                    </Button>
-                    <DownloadDropdown
-                      onDownloadDocx={handleDownloadDocx}
-                      onDownloadPdf={handleDownloadPdf}
-                    />
+                <div className="flex justify-between items-center flex-wrap gap-2">
+                  <h3 className="font-semibold text-lg">
+                    {showDiff ? "Diff View" : "Tailored Resume"}
+                  </h3>
+                  <div className="flex gap-2 flex-wrap">
+                    {canDiff && (
+                      <Button
+                        variant={showDiff ? "default" : "outline"}
+                        size="sm"
+                        className="gap-2"
+                        onClick={() => setShowDiff(!showDiff)}
+                      >
+                        <GitCompare className="w-4 h-4" />
+                        {showDiff ? "Hide Diff" : "View Diff"}
+                      </Button>
+                    )}
+                    {!showDiff && (
+                      <>
+                        <Button variant="outline" size="sm" className="gap-2" onClick={handleCopy}>
+                          <Copy className="w-4 h-4" /> Copy Text
+                        </Button>
+                        <DownloadDropdown
+                          onDownloadDocx={handleDownloadDocx}
+                          onDownloadPdf={handleDownloadPdf}
+                        />
+                      </>
+                    )}
                   </div>
                 </div>
-                <ScrollArea className="flex-1 bg-white rounded-lg border border-border/50 p-6">
-                  <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">
-                    {tailoredText}
-                  </pre>
-                </ScrollArea>
+                {showDiff ? (
+                  <DiffViewer original={originalResumeText} tailored={tailoredText} />
+                ) : (
+                  <ScrollArea className="flex-1 bg-white rounded-lg border border-border/50 p-6">
+                    <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">
+                      {tailoredText}
+                    </pre>
+                  </ScrollArea>
+                )}
               </div>
             ) : (
               <div className="text-center text-muted-foreground space-y-4 opacity-50">

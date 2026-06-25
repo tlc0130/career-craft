@@ -108,3 +108,17 @@ export const activityLogs = pgTable("activity_logs", {
 });
 
 export type ActivityLog = typeof activityLogs.$inferSelect;
+
+export const atsScoreHistory = pgTable("ats_score_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  score: integer("score").notNull(),
+  label: text("label").notNull(),
+  jobSnippet: text("job_snippet"),
+  foundKeywords: jsonb("found_keywords").$type<string[]>().notNull(),
+  missingKeywords: jsonb("missing_keywords").$type<string[]>().notNull(),
+  suggestions: jsonb("suggestions").$type<string[]>().notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type AtsScoreHistoryEntry = typeof atsScoreHistory.$inferSelect;

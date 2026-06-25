@@ -3,6 +3,8 @@ import OpenAI from "openai";
 import multer from "multer";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import mammoth from "mammoth";
+import { eq, desc } from "drizzle-orm";
+import { db, atsScoreHistory } from "@workspace/db";
 import { requireAuth } from "../middlewares/auth";
 import { consumeAiCredit, getUsage } from "../lib/aiCredits";
 import { aiHelperLimiter } from "../middlewares/rateLimit";
@@ -352,6 +354,18 @@ Return ONLY the JSON object, no commentary.`,
     }
 
     logActivity({ event: "ai.ats_score", userId: req.session.userId, statusCode: 200, req });
+
+    // Persist to history (fire and forget — don't block the response)
+    db.insert(atsScoreHistory).values({
+      userId: req.session.userId!,
+      score: typeof result["score"] === "number" ? result["score"] : 0,
+      label: typeof result["label"] === "string" ? result["label"] : "",
+      jobSnippet: jobDescription.slice(0, 300).trim() || null,
+      foundKeywords: Array.isArray(result["foundKeywords"]) ? (result["foundKeywords"] as string[]) : [],
+      missingKeywords: Array.isArray(result["missingKeywords"]) ? (result["missingKeywords"] as string[]) : [],
+      suggestions: Array.isArray(result["suggestions"]) ? (result["suggestions"] as string[]) : [],
+    }).catch((err: unknown) => req.log.error({ err }, "Failed to save ATS score history"));
+
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI ats-score error");
@@ -717,6 +731,137 @@ Rules:
         ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
         : "AI processing failed. Please try again.";
     res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Scrape a job posting URL and return plain text
+// ---------------------------------------------------------------------------
+router.post("/ai/scrape-job", async (req, res) => {
+  try {
+    const rawUrl = (req.body as { url?: string }).url ?? "";
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(rawUrl);
+    } catch {
+      res.status(400).json({ error: "Invalid URL. Please enter a valid job posting URL." });
+      return;
+    }
+
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) {
+      res.status(400).json({ error: "Only HTTP and HTTPS URLs are supported." });
+      return;
+    }
+
+    // Basic SSRF protection: block private/internal ranges
+    const hostname = parsedUrl.hostname.toLowerCase();
+    const blocked = [
+      /^localhost$/i,
+      /^127\./,
+      /^10\./,
+      /^172\.(1[6-9]|2[0-9]|3[01])\./,
+      /^192\.168\./,
+      /^::1$/,
+      /^0\.0\.0\.0$/,
+      /^169\.254\./,
+    ];
+    if (blocked.some((p) => p.test(hostname))) {
+      res.status(400).json({ error: "Cannot fetch from private or internal addresses." });
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+
+    let html: string;
+    try {
+      const response = await fetch(parsedUrl.toString(), {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; CareerCraft/1.0; job-description-fetcher)",
+          "Accept": "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+        },
+        redirect: "follow",
+      });
+      clearTimeout(timer);
+
+      if (!response.ok) {
+        res.status(422).json({
+          error: `The page returned HTTP ${response.status}. Try copying the job description text manually.`,
+        });
+        return;
+      }
+
+      const contentType = response.headers.get("content-type") ?? "";
+      if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+        res.status(422).json({
+          error: "This URL doesn't appear to be a web page. Try copying the job description text manually.",
+        });
+        return;
+      }
+
+      html = await response.text();
+    } catch (fetchErr: any) {
+      clearTimeout(timer);
+      if (fetchErr?.name === "AbortError") {
+        res.status(504).json({ error: "The page took too long to respond. Try copying the text manually." });
+      } else {
+        res.status(422).json({ error: "Could not load the page. It may require a login or block automated access." });
+      }
+      return;
+    }
+
+    // Strip HTML tags, scripts, styles, navigation elements
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<nav[\s\S]*?<\/nav>/gi, " ")
+      .replace(/<header[\s\S]*?<\/header>/gi, " ")
+      .replace(/<footer[\s\S]*?<\/footer>/gi, " ")
+      .replace(/<!--[\s\S]*?-->/g, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#039;/gi, "'")
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    if (text.length < 100) {
+      res.status(422).json({
+        error: "The page doesn't seem to contain readable text. Try copying the job description manually.",
+      });
+      return;
+    }
+
+    logActivity({ event: "ai.scrape_job", userId: req.session.userId, statusCode: 200, req });
+    res.json({ text: text.slice(0, 8000) });
+  } catch (err: any) {
+    req.log.error({ err }, "scrape-job error");
+    res.status(500).json({ error: "Failed to fetch the job posting. Try copying the text manually." });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ATS score history
+// ---------------------------------------------------------------------------
+router.get("/ai/ats-history", async (req, res) => {
+  try {
+    const history = await db
+      .select()
+      .from(atsScoreHistory)
+      .where(eq(atsScoreHistory.userId, req.session.userId!))
+      .orderBy(desc(atsScoreHistory.createdAt))
+      .limit(50);
+    res.json(history);
+  } catch (err) {
+    req.log.error({ err }, "ats-history error");
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
-import { BarChart2, Loader2, CheckCircle2, AlertCircle, BookOpen } from "lucide-react";
+import { BarChart2, Loader2, CheckCircle2, AlertCircle, BookOpen, Clock } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 
@@ -562,6 +562,143 @@ function SkillsGapTab() {
 }
 
 // ---------------------------------------------------------------------------
+// ATS Score History Tab
+// ---------------------------------------------------------------------------
+interface AtsHistoryEntry {
+  id: string;
+  score: number;
+  label: string;
+  jobSnippet: string | null;
+  foundKeywords: string[];
+  missingKeywords: string[];
+  createdAt: string;
+}
+
+function HistoryTab() {
+  const { toast } = useToast();
+  const [history, setHistory] = useState<AtsHistoryEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/ai/ats-history", { credentials: "include" })
+      .then((r) => r.json())
+      .then((data: AtsHistoryEntry[]) => {
+        setHistory(data);
+        setLoading(false);
+      })
+      .catch(() => {
+        setLoading(false);
+        toast({ title: "Failed to load history", variant: "destructive" });
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (history.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
+        <BarChart2 className="w-12 h-12 opacity-25" />
+        <p className="font-medium text-base">No history yet</p>
+        <p className="text-sm text-center max-w-xs">
+          Run an ATS Match Score to start tracking how your resume matches job descriptions over time.
+        </p>
+      </div>
+    );
+  }
+
+  // Simple trend: last 10 scores for a sparkline-style bar chart
+  const recent = history.slice(0, 10).reverse();
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-muted-foreground">
+        Your last {history.length} ATS match score{history.length !== 1 ? "s" : ""}, most recent first.
+      </p>
+
+      {/* Mini trend chart */}
+      {recent.length > 1 && (
+        <Card className="bg-card border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">Score Trend</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-end gap-1.5 h-16">
+              {recent.map((entry, i) => (
+                <div key={entry.id} className="flex-1 flex flex-col items-center gap-1">
+                  <div
+                    className={`w-full rounded-t-sm transition-all ${scoreBarColor(entry.score)}`}
+                    style={{ height: `${Math.max(8, (entry.score / 100) * 48)}px` }}
+                    title={`${entry.score}% — ${new Date(entry.createdAt).toLocaleDateString()}`}
+                  />
+                  <span className="text-[9px] text-muted-foreground">{entry.score}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* History list */}
+      <div className="space-y-3">
+        {history.map((entry) => (
+          <Card key={entry.id} className="bg-card border-border/50 hover:border-border transition-colors">
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-center gap-4">
+                {/* Score circle */}
+                <div
+                  className={`shrink-0 w-14 h-14 rounded-full border-2 flex flex-col items-center justify-center ${scoreBgColor(entry.score)}`}
+                >
+                  <span className={`text-lg font-bold leading-none ${scoreColor(entry.score)}`}>
+                    {entry.score}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-medium">%</span>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-semibold ${scoreColor(entry.score)}`}>{entry.label}</div>
+                  {entry.jobSnippet && (
+                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{entry.jobSnippet}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {new Date(entry.createdAt).toLocaleDateString(undefined, {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+
+                <div className="shrink-0 flex flex-col gap-1 text-right text-xs">
+                  <span className="text-green-500 font-medium">{entry.foundKeywords.length} found</span>
+                  <span className="text-red-400 font-medium">{entry.missingKeywords.length} missing</span>
+                </div>
+              </div>
+
+              {/* Score bar */}
+              <div className="mt-3 w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${scoreBarColor(entry.score)}`}
+                  style={{ width: `${entry.score}%` }}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 export default function ATSScore() {
@@ -600,6 +737,7 @@ export default function ATSScore() {
             <TabsTrigger value="ats-match">ATS Match Score</TabsTrigger>
             <TabsTrigger value="resume-score">Resume Score</TabsTrigger>
             <TabsTrigger value="skills-gap">Skills Gap</TabsTrigger>
+            <TabsTrigger value="history">History</TabsTrigger>
           </TabsList>
 
           <TabsContent value="ats-match">
@@ -612,6 +750,10 @@ export default function ATSScore() {
 
           <TabsContent value="skills-gap">
             <SkillsGapTab />
+          </TabsContent>
+
+          <TabsContent value="history">
+            <HistoryTab />
           </TabsContent>
         </Tabs>
       </div>
