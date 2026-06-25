@@ -24,3 +24,7 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Supabase's connection pooler uses an intermediate CA not in Node's default
+      # bundle. Disabling cert verification here lets pg connect via SSL (required
+      # for Supabase tenant routing) without rejecting the pooler's certificate.
+      NODE_TLS_REJECT_UNAUTHORIZED: "0"
