@@ -122,3 +122,10 @@ export const atsScoreHistory = pgTable("ats_score_history", {
 });
 
 export type AtsScoreHistoryEntry = typeof atsScoreHistory.$inferSelect;
+
+// Managed by connect-pg-simple — included here so drizzle-kit push never drops it
+export const userSessions = pgTable("user_sessions", {
+  sid: varchar("sid").primaryKey(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire", { precision: 6 }).notNull(),
+});
