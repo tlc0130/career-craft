@@ -95,3 +95,16 @@ export const updateJobApplicationSchema = insertJobApplicationSchema.partial();
 
 export type JobApplication = typeof jobApplications.$inferSelect;
 export type InsertJobApplication = z.infer<typeof insertJobApplicationSchema>;
+
+export const activityLogs = pgTable("activity_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+  event: text("event").notNull(),
+  meta: jsonb("meta"),
+  ip: text("ip"),
+  statusCode: integer("status_code"),
+  durationMs: integer("duration_ms"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type ActivityLog = typeof activityLogs.$inferSelect;

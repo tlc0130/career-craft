@@ -6,6 +6,7 @@ import mammoth from "mammoth";
 import { requireAuth } from "../middlewares/auth";
 import { consumeAiCredit, getUsage } from "../lib/aiCredits";
 import { aiHelperLimiter } from "../middlewares/rateLimit";
+import { logActivity } from "../lib/activityLogger";
 
 const router = Router();
 
@@ -102,6 +103,7 @@ router.post("/ai/tailor", upload.single("resume"), async (req, res) => {
     const controller = new AbortController();
     res.on("close", () => controller.abort());
 
+    const startMs = Date.now();
     const stream = await getOpenAI().chat.completions.create(
       {
         model: getModel(),
@@ -142,6 +144,7 @@ Return ONLY the tailored resume text, formatted cleanly with clear section heade
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
     }
+    logActivity({ event: "ai.tailor", userId: req.session.userId, durationMs: Date.now() - startMs, statusCode: 200, req });
   } catch (err: any) {
     if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
     req.log.error({ err }, "AI tailor error");
@@ -201,6 +204,7 @@ router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
     const controller = new AbortController();
     res.on("close", () => controller.abort());
 
+    const coverLetterStartMs = Date.now();
     const stream = await getOpenAI().chat.completions.create(
       {
         model: getModel(),
@@ -242,6 +246,7 @@ Return ONLY the cover letter body text (no address block, no date, no signature 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
     }
+    logActivity({ event: "ai.cover_letter", userId: req.session.userId, meta: { tone }, durationMs: Date.now() - coverLetterStartMs, statusCode: 200, req });
   } catch (err: any) {
     if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
     req.log.error({ err }, "AI cover letter error");
@@ -346,6 +351,7 @@ Return ONLY the JSON object, no commentary.`,
       return;
     }
 
+    logActivity({ event: "ai.ats_score", userId: req.session.userId, statusCode: 200, req });
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI ats-score error");
@@ -402,6 +408,7 @@ Return ONLY the JSON object, no commentary.`,
       return;
     }
 
+    logActivity({ event: "ai.resume_score", userId: req.session.userId, statusCode: 200, req });
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI resume-score error");
@@ -450,6 +457,7 @@ router.post("/ai/generate-summary", aiHelperLimiter, async (req, res) => {
       return;
     }
 
+    logActivity({ event: "ai.generate_summary", userId: req.session.userId, statusCode: 200, req });
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI generate-summary error");
@@ -499,6 +507,7 @@ router.post("/ai/generate-bullets", aiHelperLimiter, async (req, res) => {
       return;
     }
 
+    logActivity({ event: "ai.generate_bullets", userId: req.session.userId, statusCode: 200, req });
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI generate-bullets error");
@@ -547,6 +556,7 @@ router.post("/ai/interview-prep", aiHelperLimiter, async (req, res) => {
       return;
     }
 
+    logActivity({ event: "ai.interview_prep", userId: req.session.userId, statusCode: 200, req });
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI interview-prep error");
@@ -595,6 +605,7 @@ router.post("/ai/skills-gap", aiHelperLimiter, async (req, res) => {
       return;
     }
 
+    logActivity({ event: "ai.skills_gap", userId: req.session.userId, statusCode: 200, req });
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI skills-gap error");
@@ -695,6 +706,7 @@ Rules:
       return;
     }
 
+    logActivity({ event: "ai.import_linkedin", userId: req.session.userId, statusCode: 200, req });
     res.json(result);
   } catch (err: any) {
     req.log.error({ err }, "AI import-linkedin error");

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import { db, users, resumes, jobApplications, registerSchema, loginSchema } from "@workspace/db";
 import { eq, or, desc } from "drizzle-orm";
+import { logActivity } from "../lib/activityLogger";
 
 const router = Router();
 
@@ -35,6 +36,7 @@ router.post("/auth/register", async (req, res) => {
     }).returning();
 
     req.session.userId = user.id;
+    logActivity({ event: "auth.register", userId: user.id, meta: { email: user.email, plan: user.plan }, statusCode: 201, req });
     res.status(201).json({
       id: user.id,
       email: user.email,
@@ -61,11 +63,13 @@ router.post("/auth/login", async (req, res) => {
   try {
     const [user] = await db.select().from(users).where(eq(users.email, email)).limit(1);
     if (!user) {
+      logActivity({ event: "auth.login.failed", meta: { reason: "user_not_found", email }, statusCode: 401, req });
       res.status(401).json({ error: "Invalid email or password" });
       return;
     }
 
     if (!user.passwordHash) {
+      logActivity({ event: "auth.login.failed", meta: { reason: "google_only", email }, statusCode: 401, req });
       // Google-only account — no password set
       res.status(401).json({ error: "This account uses Google sign-in. Please continue with Google." });
       return;
@@ -73,6 +77,7 @@ router.post("/auth/login", async (req, res) => {
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
+      logActivity({ event: "auth.login.failed", meta: { reason: "bad_password", email }, statusCode: 401, req });
       res.status(401).json({ error: "Invalid email or password" });
       return;
     }
@@ -87,6 +92,7 @@ router.post("/auth/login", async (req, res) => {
     }
 
     req.session.userId = user.id;
+    logActivity({ event: "auth.login", userId: user.id, meta: { email: user.email, plan: user.plan }, statusCode: 200, req });
     res.json({
       id: user.id,
       email: user.email,
@@ -102,7 +108,9 @@ router.post("/auth/login", async (req, res) => {
 });
 
 router.post("/auth/logout", (req, res) => {
+  const userId = req.session.userId;
   req.session.destroy(() => {
+    logActivity({ event: "auth.logout", userId, statusCode: 200, req });
     res.json({ ok: true });
   });
 });
@@ -306,6 +314,8 @@ router.get("/auth/google/callback", async (req, res) => {
     }
 
     req.session.userId = user.id;
+    const isNewUser = !existing[0];
+    logActivity({ event: "auth.google.login", userId: user.id, meta: { email: user.email, isNewUser }, statusCode: 302, req });
     res.redirect(`${appUrl}/`);
   } catch (err) {
     req.log.error({ err }, "Google OAuth callback error");
@@ -380,6 +390,7 @@ router.delete("/auth/account", async (req, res) => {
 
     await db.delete(users).where(eq(users.id, userId));
 
+    logActivity({ event: "auth.account.deleted", meta: { userId }, statusCode: 200, req });
     res.json({ ok: true, message: "Account deleted successfully." });
   } catch (err) {
     req.log.error({ err }, "Account deletion error");
