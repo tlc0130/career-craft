@@ -5,7 +5,7 @@ import { ResumeInput, ResumeInputValue } from "@/components/ResumeInput";
 import { JobPostingInput } from "@/components/JobPostingInput";
 import { DiffViewer } from "@/components/DiffViewer";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Sparkles, Copy, FileText, RefreshCw, GitCompare } from "lucide-react";
+import { ArrowRight, Sparkles, Copy, FileText, RefreshCw, GitCompare, PenLine } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useMutation } from "@tanstack/react-query";
@@ -17,7 +17,8 @@ async function streamAIRequest(
   url: string,
   body: FormData,
   onChunk: (text: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onMeta?: (meta: { original?: string }) => void
 ): Promise<void> {
   const res = await fetch(url, {
     method: "POST",
@@ -46,6 +47,7 @@ async function streamAIRequest(
         try {
           const payload = JSON.parse(line.slice(6));
           if (payload.content) onChunk(payload.content);
+          if (typeof payload.original === "string") onMeta?.({ original: payload.original });
           if (payload.error) throw new Error(payload.error);
         } catch {}
       }
@@ -117,17 +119,22 @@ export default function Tailor() {
           result += chunk;
           setTailoredText(result);
         },
-        controller.signal
+        controller.signal,
+        (meta) => {
+          if (meta.original) setOriginalResumeText(meta.original);
+        }
       );
 
       return result;
     },
-    onSuccess: () => {
+    onSuccess: (result: string) => {
       setStep("result");
       toast({
         title: "Resume Tailored!",
         description: "Your resume has been optimized for this job description.",
       });
+      // Auto-save the tailored resume to the user's account (best effort).
+      saveTailored(result);
     },
     onError: (err: Error) => {
       setStep("input");
@@ -142,6 +149,9 @@ export default function Tailor() {
   const runTailor = () => {
     setStep("processing");
     setTailoredText("");
+    // Seed the original from pasted/saved text immediately; the server also
+    // streams back the extracted original (covering file uploads) via onMeta.
+    setOriginalResumeText(resumeInput?.mode === "text" ? resumeInput.text : "");
     fetchJobContext(jobDescription).then(setJobContext);
     tailorMutation.mutate();
   };
@@ -150,12 +160,6 @@ export default function Tailor() {
     if (step === "upload" && hasResume) {
       setStep("input");
     } else if (step === "input" && jobDescription) {
-      // Capture original text for diff (available in text/saved mode)
-      if (resumeInput?.mode === "text") {
-        setOriginalResumeText(resumeInput.text);
-      } else {
-        setOriginalResumeText("");
-      }
       setJobContext(null);
       setShowDiff(false);
       runTailor();
@@ -165,6 +169,47 @@ export default function Tailor() {
   const handleRetailor = () => {
     setShowDiff(false);
     runTailor();
+  };
+
+  // Persist the tailored resume to the user's account. Best-effort: a failure
+  // here shouldn't disrupt the result view.
+  const saveTailored = async (tailored: string) => {
+    if (!user || !tailored.trim() || !originalResumeText.trim()) return;
+    const ctx = jobContext ?? (await fetchJobContext(jobDescription).catch(() => null));
+    const company = ctx?.company ?? null;
+    const jobTitle = ctx?.title ?? null;
+    const title = company && jobTitle ? `${jobTitle} — ${company}` : jobTitle || company || "Tailored Resume";
+    try {
+      await fetch("/api/tailored-resumes", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          company,
+          jobTitle,
+          originalText: originalResumeText,
+          tailoredText: tailored,
+          jobDescription,
+        }),
+      });
+    } catch {
+      // ignore — saving history is non-critical
+    }
+  };
+
+  const handleGenerateCoverLetter = () => {
+    // Hand the tailored resume + job description to the cover-letter flow so the
+    // user never re-pastes the job description.
+    try {
+      sessionStorage.setItem(
+        "coverLetterSeed",
+        JSON.stringify({ resumeText: tailoredText, jobDescription })
+      );
+    } catch {
+      // sessionStorage can throw in private mode; fall through to plain nav
+    }
+    navigate("/cover-letter");
   };
 
   const handleCopy = async () => {
@@ -306,6 +351,9 @@ export default function Tailor() {
                     )}
                     {!showDiff && (
                       <>
+                        <Button variant="outline" size="sm" className="gap-2" onClick={handleGenerateCoverLetter}>
+                          <PenLine className="w-4 h-4" /> Cover Letter
+                        </Button>
                         <Button variant="outline" size="sm" className="gap-2" onClick={handleCopy}>
                           <Copy className="w-4 h-4" /> Copy Text
                         </Button>

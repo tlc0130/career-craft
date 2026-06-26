@@ -11,6 +11,7 @@ import Builder from "@/pages/Builder";
 import CoverLetter from "@/pages/CoverLetter";
 import Login from "@/pages/Login";
 import MyResumes from "@/pages/MyResumes";
+import TailoredResumes from "@/pages/TailoredResumes";
 import JobTracker from "@/pages/JobTracker";
 import ATSScore from "@/pages/ATSScore";
 import InterviewPrep from "@/pages/InterviewPrep";
@@ -25,6 +26,7 @@ function Router() {
       <Route path="/cover-letter" component={CoverLetter} />
       <Route path="/login" component={Login} />
       <Route path="/my-resumes" component={MyResumes} />
+      <Route path="/tailored-resumes" component={TailoredResumes} />
       <Route path="/ats-score" component={ATSScore} />
       <Route path="/interview-prep" component={InterviewPrep} />
       <Route path="/profile" component={Profile} />

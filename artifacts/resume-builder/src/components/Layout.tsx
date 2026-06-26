@@ -34,6 +34,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     { icon: Briefcase, label: "Job Tracker", href: "/job-tracker" },
     { icon: PenTool, label: "Resume Builder", href: "/builder" },
     { icon: FolderOpen, label: "My Resumes", href: "/my-resumes" },
+    { icon: Wand2, label: "Tailored Resumes", href: "/tailored-resumes" },
     { icon: UserCircle, label: "Profile", href: "/profile" },
   ];
 

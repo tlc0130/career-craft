@@ -100,6 +100,10 @@ router.post("/ai/tailor", upload.single("resume"), async (req, res) => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
+    // Emit the extracted original resume text up front so the client can render
+    // an original-vs-tailored diff even when the resume was uploaded as a file.
+    res.write(`data: ${JSON.stringify({ original: resumeText })}\n\n`);
+
     // Cancel the upstream OpenAI request if the client disconnects, so we stop
     // paying for tokens the user will never see.
     const controller = new AbortController();
@@ -162,6 +166,105 @@ Return ONLY the tailored resume text, formatted cleanly with clear section heade
       res.write(`data: ${JSON.stringify({ error: userMessage })}\n\n`);
       res.end();
     }
+  }
+});
+
+// Parse an uploaded/pasted resume into the builder's structured ResumeContent
+// shape, so users can create a saved, editable resume without filling every
+// field by hand.
+router.post("/ai/parse-resume", upload.single("resume"), async (req, res) => {
+  try {
+    let resumeText: string;
+
+    if (req.file) {
+      resumeText = await extractTextFromFile(req.file.buffer, req.file.mimetype, req.file.originalname);
+      if (resumeText.trim().length < 50) {
+        res.status(422).json({
+          error:
+            "We couldn't read text from this file. It may be a scanned image or corrupted. Try a text-based PDF or paste your resume instead.",
+        });
+        return;
+      }
+    } else {
+      resumeText = (req.body as { resumeText?: string }).resumeText ?? "";
+    }
+
+    if (!resumeText.trim()) {
+      res.status(400).json({ error: "A resume file or resumeText is required" });
+      return;
+    }
+
+    const completion = await getOpenAI().chat.completions.create({
+      model: getModel(),
+      max_tokens: 2000,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a professional resume parser. Extract structured resume data from raw resume text. Return ONLY valid JSON matching the exact schema provided. Never invent information that isn't present.",
+        },
+        {
+          role: "user",
+          content: `Parse this resume into a structured object. Resume text: ${resumeText.slice(0, 6000)}
+
+Return this exact JSON structure:
+{
+  "contact": {
+    "firstName": string,
+    "lastName": string,
+    "title": string,
+    "email": string,
+    "phone": string,
+    "summary": string,
+    "location": string,
+    "linkedin": string,
+    "website": string
+  },
+  "experience": [
+    { "id": "exp-1", "jobTitle": string, "company": string, "startDate": string, "endDate": string, "description": string }
+  ],
+  "education": [
+    { "id": "edu-1", "school": string, "degree": string, "startYear": string, "endYear": string }
+  ],
+  "skills": [string]
+}
+
+Rules:
+- firstName/lastName: split the full name found at the top
+- title: their current or most recent job title
+- summary: the professional summary/objective if present, else a 1-2 sentence summary built only from stated facts
+- email/phone/location/linkedin/website: extract if present, else empty string
+- experience: most recent first; keep the original bullet points in description (one per line, prefixed with "• "); use "Present" for current roles
+- education: degree should include field of study
+- startDate/endDate format: "YYYY-MM" or "YYYY" or "Present"
+- skills: extract listed skills, max 25
+- Generate unique ids like "exp-1", "exp-2", "edu-1", "edu-2"
+- If a section has no data, return an empty array`,
+        },
+      ],
+    });
+
+    let result: Record<string, unknown>;
+    try {
+      result = JSON.parse(completion.choices[0].message.content ?? "{}");
+    } catch {
+      req.log.error({ content: completion.choices[0].message.content }, "AI returned malformed JSON");
+      res.status(502).json({ error: "AI returned an unexpected response. Please try again." });
+      return;
+    }
+
+    logActivity({ event: "ai.parse_resume", userId: req.session.userId, statusCode: 200, req });
+    res.json(result);
+  } catch (err: any) {
+    req.log.error({ err }, "AI parse-resume error");
+    const userMessage =
+      err?.status === 429
+        ? "AI quota exceeded. Please check your OpenRouter billing at openrouter.ai."
+        : err?.status === 401
+        ? "Invalid OpenRouter API key. Please check your OPENROUTER_API_KEY."
+        : "AI processing failed. Please try again.";
+    res.status(err?.status === 429 || err?.status === 401 ? err.status : 500).json({ error: userMessage });
   }
 });
 

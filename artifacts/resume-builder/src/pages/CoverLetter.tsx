@@ -89,6 +89,25 @@ export default function CoverLetter() {
     if (!authLoading && !user) navigate("/login");
   }, [authLoading, user, navigate]);
 
+  // If the user arrived here from "Generate Cover Letter" on a tailored resume,
+  // pre-fill the resume + job description and jump straight to Job Details so
+  // they never have to re-paste the posting.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("coverLetterSeed");
+      if (!raw) return;
+      sessionStorage.removeItem("coverLetterSeed");
+      const seed = JSON.parse(raw) as { resumeText?: string; jobDescription?: string };
+      if (seed.resumeText?.trim()) {
+        setResumeInput({ mode: "text", text: seed.resumeText });
+        if (seed.jobDescription?.trim()) setJobDescription(seed.jobDescription);
+        setStep("input");
+      }
+    } catch {
+      // ignore malformed seed
+    }
+  }, []);
+
   // Cancel any in-flight stream when leaving the page.
   useEffect(() => () => abortRef.current?.abort(), []);
 

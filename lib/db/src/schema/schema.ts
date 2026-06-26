@@ -129,3 +129,31 @@ export const userSessions = pgTable("user_sessions", {
   sess: jsonb("sess").notNull(),
   expire: timestamp("expire", { precision: 6 }).notNull(),
 });
+
+// Every AI-tailored resume is saved here for logged-in users. Separate from the
+// builder `resumes` table (which is structured + plan-limited) — this is a
+// history of AI text outputs, kept for all users so they can revisit, diff,
+// re-download, and spin a cover letter off any past run.
+export const tailoredResumes = pgTable("tailored_resumes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  company: text("company"),
+  jobTitle: text("job_title"),
+  originalText: text("original_text").notNull(),
+  tailoredText: text("tailored_text").notNull(),
+  jobDescription: text("job_description").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const saveTailoredResumeSchema = z.object({
+  title: z.string().min(1).max(200),
+  company: z.string().max(200).optional().nullable(),
+  jobTitle: z.string().max(200).optional().nullable(),
+  originalText: z.string().min(1),
+  tailoredText: z.string().min(1),
+  jobDescription: z.string().min(1),
+});
+
+export type TailoredResume = typeof tailoredResumes.$inferSelect;
+export type SaveTailoredResume = z.infer<typeof saveTailoredResumeSchema>;

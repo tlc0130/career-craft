@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2, Download, FileText, Wand2, Linkedin } from "lucide-react";
+import { Plus, Trash2, ArrowRight, Save, X, Crown, Loader2, Download, FileText, Wand2, Linkedin, Upload } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -97,6 +97,12 @@ export default function Builder() {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState('');
   const [importSuccess, setImportSuccess] = useState(false);
+
+  const [showUploadImport, setShowUploadImport] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadText, setUploadText] = useState('');
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState('');
 
   const [experiences, setExperiences] = useState<Experience[]>([makeEmptyExperience()]);
   const [education, setEducation] = useState<Education[]>([makeEmptyEducation()]);
@@ -466,6 +472,78 @@ export default function Builder() {
     }
   }
 
+  function applyImported(imported: any) {
+    setContact((prev) => ({
+      firstName: imported.contact?.firstName ?? prev.firstName,
+      lastName: imported.contact?.lastName ?? prev.lastName,
+      title: imported.contact?.title ?? prev.title,
+      email: imported.contact?.email || prev.email || '',
+      phone: imported.contact?.phone || prev.phone || '',
+      summary: imported.contact?.summary ?? prev.summary,
+      location: imported.contact?.location ?? prev.location,
+      linkedin: imported.contact?.linkedin ?? prev.linkedin,
+      website: imported.contact?.website ?? prev.website,
+    }));
+    if (Array.isArray(imported.experience) && imported.experience.length > 0) {
+      setExperiences(imported.experience.map((e: any) => ({
+        id: e.id ?? makeId(),
+        jobTitle: e.jobTitle ?? "",
+        company: e.company ?? "",
+        startDate: e.startDate ?? "",
+        endDate: e.endDate ?? "",
+        description: e.description ?? "",
+      })));
+    }
+    if (Array.isArray(imported.education) && imported.education.length > 0) {
+      setEducation(imported.education.map((e: any) => ({
+        id: e.id ?? makeId(),
+        school: e.school ?? "",
+        degree: e.degree ?? "",
+        startYear: e.startYear ?? "",
+        endYear: e.endYear ?? "",
+      })));
+    }
+    if (Array.isArray(imported.skills) && imported.skills.length > 0) {
+      setSkills(imported.skills);
+    }
+    markDirty();
+  }
+
+  async function handleParseResume() {
+    if (!uploadFile && !uploadText.trim()) return;
+    setParsing(true);
+    setParseError('');
+    try {
+      const body = new FormData();
+      if (uploadFile) {
+        body.append('resume', uploadFile);
+      } else {
+        body.append('resumeText', uploadText);
+      }
+      const res = await fetch('/api/ai/parse-resume', {
+        method: 'POST',
+        credentials: 'include',
+        body,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Parsing failed' }));
+        throw new Error(err.error ?? 'Parsing failed');
+      }
+      const imported = await res.json();
+      applyImported(imported);
+      setShowUploadImport(false);
+      setUploadFile(null);
+      setUploadText('');
+      setImportSuccess(true);
+      setActiveTab('contact');
+      setTimeout(() => setImportSuccess(false), 5000);
+    } catch (err: any) {
+      setParseError(err.message ?? 'Could not read that resume. Try a text-based PDF/DOCX or paste the text.');
+    } finally {
+      setParsing(false);
+    }
+  }
+
   if (loadingResume) {
     return (
       <Layout>
@@ -503,6 +581,10 @@ export default function Builder() {
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <Button variant="outline" className="gap-2" onClick={() => setShowUploadImport(true)}>
+              <Upload className="w-4 h-4" />
+              Upload Resume
+            </Button>
             <Button variant="outline" className="gap-2" onClick={() => setShowLinkedInImport(true)}>
               <Linkedin className="w-4 h-4" />
               Import from LinkedIn
@@ -519,6 +601,75 @@ export default function Builder() {
             Profile imported! Review and edit the fields below.
           </div>
         )}
+
+        <Dialog open={showUploadImport} onOpenChange={(open) => { setShowUploadImport(open); if (!open) { setUploadFile(null); setUploadText(''); setParseError(''); } }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Upload className="w-5 h-5 text-primary" />
+                Upload Resume
+              </DialogTitle>
+              <DialogDescription>
+                Upload a PDF or Word resume (or paste the text) and we'll fill in your details automatically. You can review and edit everything before saving.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Resume File (PDF or DOCX)</Label>
+                <label
+                  htmlFor="builder-upload-file"
+                  className="flex items-center gap-3 rounded-lg border-2 border-dashed border-border hover:border-primary/50 hover:bg-muted/50 cursor-pointer px-4 py-5 transition-colors"
+                >
+                  <Upload className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <span className="text-sm text-muted-foreground truncate">
+                    {uploadFile ? uploadFile.name : "Click to choose a PDF or DOCX file"}
+                  </span>
+                  <input
+                    id="builder-upload-file"
+                    type="file"
+                    className="hidden"
+                    accept=".pdf,.doc,.docx"
+                    onChange={(e) => { setUploadFile(e.target.files?.[0] ?? null); e.target.value = ""; }}
+                  />
+                </label>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-border" />
+                <span className="text-xs text-muted-foreground">or paste text</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="uploadText">Resume Text</Label>
+                <Textarea
+                  id="uploadText"
+                  className="min-h-[120px]"
+                  placeholder="Paste your full resume text here..."
+                  value={uploadText}
+                  onChange={(e) => setUploadText(e.target.value)}
+                  disabled={!!uploadFile}
+                />
+              </div>
+              {parseError && <p className="text-sm text-destructive">{parseError}</p>}
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => { setShowUploadImport(false); setUploadFile(null); setUploadText(''); setParseError(''); }}
+                  disabled={parsing}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleParseResume}
+                  disabled={parsing || (!uploadFile && !uploadText.trim())}
+                  className="gap-2"
+                >
+                  {parsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                  {parsing ? 'Reading…' : 'Import Resume'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={showLinkedInImport} onOpenChange={(open) => { setShowLinkedInImport(open); if (!open) { setLinkedInText(''); setImportError(''); } }}>
           <DialogContent className="max-w-lg">
