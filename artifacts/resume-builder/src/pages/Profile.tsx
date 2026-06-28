@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
 import { Link } from "wouter";
+import { LogOut } from "lucide-react";
 
 interface StatsData {
   creditsUsed: number;
@@ -24,8 +25,13 @@ interface StatsData {
 }
 
 export default function Profile() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, logout } = useAuth();
   const [, navigate] = useLocation();
+
+  async function handleSignOut() {
+    await logout();
+    navigate("/login");
+  }
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -156,12 +162,18 @@ export default function Profile() {
     <Layout>
       <div className="max-w-2xl mx-auto pb-20 space-y-6">
         {/* Page header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-display font-bold mb-2 flex items-center gap-3">
-            <UserCircle className="w-8 h-8 text-primary" />
-            Profile
-          </h1>
-          <p className="text-muted-foreground">Manage your account details and subscription.</p>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-display font-bold mb-2 flex items-center gap-3">
+              <UserCircle className="w-8 h-8 text-primary" />
+              Profile
+            </h1>
+            <p className="text-muted-foreground">Manage your account details and subscription.</p>
+          </div>
+          <Button variant="outline" onClick={handleSignOut} className="gap-2 shrink-0">
+            <LogOut className="w-4 h-4" />
+            Sign Out
+          </Button>
         </div>
 
         {/* Account Info card */}

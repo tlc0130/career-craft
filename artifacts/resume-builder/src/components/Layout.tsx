@@ -134,6 +134,23 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <span className="font-display font-bold text-lg leading-none">Career Craft</span>
             <span className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">by Hidden Tech Daily</span>
           </div>
+          {user ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleLogout}
+              className="ml-auto gap-2 text-muted-foreground hover:text-foreground"
+            >
+              <LogOut className="w-5 h-5" />
+              <span className="sr-only sm:not-sr-only">Sign Out</span>
+            </Button>
+          ) : (
+            <Link href="/login" className="ml-auto">
+              <Button variant="ghost" size="sm" className="gap-2">
+                <LogOut className="w-5 h-5" /> Sign In
+              </Button>
+            </Link>
+          )}
         </header>
 
         <div className="flex-1 overflow-y-auto p-4 md:p-8 relative">
