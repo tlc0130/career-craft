@@ -513,6 +513,12 @@ export default function Builder() {
     if (!uploadFile && !uploadText.trim()) return;
     setParsing(true);
     setParseError('');
+
+    // Reading a resume can take 20-40s on the AI side; bound it so the dialog
+    // never hangs forever, and surface a clear message if it times out.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 90_000);
+
     try {
       const body = new FormData();
       if (uploadFile) {
@@ -524,12 +530,16 @@ export default function Builder() {
         method: 'POST',
         credentials: 'include',
         body,
+        signal: controller.signal,
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Parsing failed' }));
-        throw new Error(err.error ?? 'Parsing failed');
+        const err = await res.json().catch(() => ({ error: `Request failed (HTTP ${res.status})` }));
+        throw new Error(err.error ?? `Request failed (HTTP ${res.status})`);
       }
       const imported = await res.json();
+      if (!imported || typeof imported !== 'object' || !imported.contact) {
+        throw new Error('The resume was read but came back empty. Try a text-based PDF/DOCX or paste the text instead.');
+      }
       applyImported(imported);
       setShowUploadImport(false);
       setUploadFile(null);
@@ -538,8 +548,14 @@ export default function Builder() {
       setActiveTab('contact');
       setTimeout(() => setImportSuccess(false), 5000);
     } catch (err: any) {
-      setParseError(err.message ?? 'Could not read that resume. Try a text-based PDF/DOCX or paste the text.');
+      console.error('parse-resume failed', err);
+      if (err?.name === 'AbortError') {
+        setParseError('That took too long to process. Try again, or paste your resume text instead of a file.');
+      } else {
+        setParseError(err?.message ?? 'Could not read that resume. Try a text-based PDF/DOCX or paste the text.');
+      }
     } finally {
+      clearTimeout(timer);
       setParsing(false);
     }
   }
@@ -650,6 +666,12 @@ export default function Builder() {
                 />
               </div>
               {parseError && <p className="text-sm text-destructive">{parseError}</p>}
+              {parsing && (
+                <p className="text-xs text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Reading your resume with AI — this can take up to 30 seconds. Please keep this open.
+                </p>
+              )}
               <div className="flex justify-end gap-2">
                 <Button
                   variant="outline"
