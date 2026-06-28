@@ -42,6 +42,7 @@ function DashboardSkeleton() {
 // Personalized dashboard (shown when user is logged in)
 // ---------------------------------------------------------------------------
 function PersonalizedDashboard({ userName }: { userName: string }) {
+  const [, navigate] = useLocation();
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -164,27 +165,31 @@ function PersonalizedDashboard({ userName }: { userName: string }) {
             <CardDescription>Complete these steps to kick off your job search</CardDescription>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-3">
+            <ul className="space-y-1">
               {gettingStartedItems.map((item) => (
-                <li key={item.href} className="flex items-center gap-3">
-                  <div
-                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                      item.done
-                        ? "border-primary bg-primary"
-                        : "border-muted-foreground/40"
-                    }`}
+                <li key={item.href}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(item.href)}
+                    className="w-full flex items-center gap-3 text-left rounded-md -mx-2 px-2 py-1.5 hover:bg-primary/5 transition-colors group"
                   >
-                    {item.done && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
-                  </div>
-                  <Link href={item.href}>
+                    <div
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                        item.done
+                          ? "border-primary bg-primary"
+                          : "border-muted-foreground/40 group-hover:border-primary"
+                      }`}
+                    >
+                      {item.done && <CheckCircle2 className="w-3 h-3 text-primary-foreground" />}
+                    </div>
                     <span
-                      className={`text-sm hover:text-primary transition-colors cursor-pointer ${
+                      className={`text-sm transition-colors group-hover:text-primary ${
                         item.done ? "line-through text-muted-foreground" : "text-foreground"
                       }`}
                     >
                       {item.label}
                     </span>
-                  </Link>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -209,9 +214,9 @@ function PersonalizedDashboard({ userName }: { userName: string }) {
               </Card>
             );
             return card.href ? (
-              <Link key={card.label} href={card.href}>
+              <div key={card.label} onClick={() => navigate(card.href)} role="button" tabIndex={0}>
                 {inner}
-              </Link>
+              </div>
             ) : (
               <div key={card.label}>{inner}</div>
             );
@@ -226,11 +231,15 @@ function PersonalizedDashboard({ userName }: { userName: string }) {
         </h3>
         <div className="flex flex-wrap gap-2">
           {quickActions.map((action) => (
-            <Link key={action.href} href={action.href}>
-              <Button variant="outline" size="sm" className="border-border/60 hover:border-primary/50 hover:text-primary">
-                {action.label}
-              </Button>
-            </Link>
+            <Button
+              key={action.href}
+              variant="outline"
+              size="sm"
+              onClick={() => navigate(action.href)}
+              className="border-border/60 hover:border-primary/50 hover:text-primary"
+            >
+              {action.label}
+            </Button>
           ))}
         </div>
       </div>
