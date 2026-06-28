@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Lock, Loader2, UserCircle, CheckCircle2, Download, Trash2 } from "lucide-react";
+import { Lock, Loader2, UserCircle, CheckCircle2, Download, Trash2, CreditCard } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +39,24 @@ export default function Profile() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  async function handleManageBilling() {
+    setPortalLoading(true);
+    try {
+      const res = await fetch("/api/stripe/portal", { credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Could not open billing portal" }));
+        throw new Error(err.error ?? "Could not open billing portal");
+      }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch (err: any) {
+      alert(err.message ?? "Could not open billing portal.");
+      setPortalLoading(false);
+    }
+  }
 
   // Redirect unauthenticated users
   useEffect(() => {
@@ -259,6 +277,18 @@ export default function Profile() {
                   Upgrade to Pro →
                 </Button>
               </Link>
+            )}
+
+            {(user.plan === "pro" || user.lifetimeAccess) && (
+              <Button
+                variant="outline"
+                onClick={handleManageBilling}
+                disabled={portalLoading}
+                className="gap-2"
+              >
+                {portalLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
+                {portalLoading ? "Opening…" : "Manage Billing"}
+              </Button>
             )}
           </CardContent>
         </Card>

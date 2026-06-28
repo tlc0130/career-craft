@@ -7,6 +7,18 @@ import type Stripe from "stripe";
 
 const router = Router();
 
+/**
+ * Public base URL for Stripe redirect/return URLs. Prefer APP_URL (set in
+ * production), fall back to a Replit domain, then localhost for dev.
+ */
+function getBaseUrl(): string {
+  const appUrl = process.env["APP_URL"];
+  if (appUrl) return appUrl.replace(/\/$/, "");
+  const domain = process.env["REPLIT_DOMAINS"]?.split(",")[0];
+  if (domain) return `https://${domain}`;
+  return "http://localhost:5000";
+}
+
 router.post("/stripe/create-checkout", requireAuth, async (req, res) => {
   const { plan } = req.body as { plan: "pro" | "lifetime" };
   if (!plan || !["pro", "lifetime"].includes(plan)) {
@@ -43,8 +55,7 @@ router.post("/stripe/create-checkout", requireAuth, async (req, res) => {
       return;
     }
 
-    const domain = process.env["REPLIT_DOMAINS"]?.split(",")[0];
-    const baseUrl = domain ? `https://${domain}` : "http://localhost:80";
+    const baseUrl = getBaseUrl();
 
     let customerId = user.stripeCustomerId;
     if (!customerId) {
@@ -179,8 +190,7 @@ router.get("/stripe/portal", requireAuth, async (req, res) => {
     }
 
     const stripe = await getUncachableStripeClient();
-    const domain = process.env["REPLIT_DOMAINS"]?.split(",")[0];
-    const baseUrl = domain ? `https://${domain}` : "http://localhost:80";
+    const baseUrl = getBaseUrl();
 
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,
