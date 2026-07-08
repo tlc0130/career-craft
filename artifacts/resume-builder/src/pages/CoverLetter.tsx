@@ -4,13 +4,17 @@ import { useLocation } from "wouter";
 import { ResumeInput, ResumeInputValue } from "@/components/ResumeInput";
 import { JobPostingInput } from "@/components/JobPostingInput";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Sparkles, Copy, FileText } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ArrowRight, Sparkles, Copy, FileText, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useMutation } from "@tanstack/react-query";
-import { downloadCoverLetterDocx, downloadCoverLetterPdf, buildFilename } from "@/lib/docx-export";
+import { downloadCoverLetterDocx, buildFilename } from "@/lib/docx-export";
+import { printCoverLetter } from "@/lib/cover-letter-print";
+import { CoverLetterPreview } from "@/components/CoverLetterPreview";
 import { DownloadDropdown } from "@/components/DownloadDropdown";
 import { useAuth } from "@/lib/auth";
+import { TEMPLATES } from "@/components/templates";
 
 async function streamAIRequest(
   url: string,
@@ -76,6 +80,7 @@ export default function CoverLetter() {
   const [coverLetterText, setCoverLetterText] = useState("");
   const [jobContext, setJobContext] = useState<JobContext | null>(null);
   const [tone, setTone] = useState<"professional" | "conversational" | "creative" | "executive">("professional");
+  const [templateId, setTemplateId] = useState("classic");
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
@@ -83,6 +88,10 @@ export default function CoverLetter() {
   const contactInfo = user
     ? { name: user.name ?? undefined, email: user.email, phone: user.phone ?? undefined }
     : undefined;
+
+  // Free users get the basic "Classic" letterhead; paid users choose a style.
+  const isPaid = !!(user && (user.plan === "pro" || user.lifetimeAccess));
+  const activeTemplate = isPaid ? templateId : "classic";
 
   // The AI endpoints require a session. Send unauthenticated visitors to log in.
   useEffect(() => {
@@ -189,7 +198,10 @@ export default function CoverLetter() {
 
   const handleDownloadPdf = () => {
     try {
-      downloadCoverLetterPdf(coverLetterText, buildFilename("Cover Letter", "pdf", jobDescription, jobContext ?? undefined), contactInfo);
+      const title = jobContext?.company && jobContext?.title
+        ? `Cover Letter — ${jobContext.title} at ${jobContext.company}`
+        : "Cover Letter";
+      printCoverLetter(activeTemplate, contactInfo, coverLetterText, title);
     } catch {
       toast({ variant: "destructive", title: "Download failed", description: "Could not generate the PDF file." });
     }
@@ -298,7 +310,7 @@ export default function CoverLetter() {
               </div>
             ) : step === "result" ? (
               <div className="w-full h-full flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-4">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center flex-wrap gap-2">
                   <h3 className="font-semibold text-lg">Generated Cover Letter</h3>
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" className="gap-2" onClick={handleCopy}>
@@ -310,10 +322,34 @@ export default function CoverLetter() {
                     />
                   </div>
                 </div>
-                <ScrollArea className="flex-1 bg-white rounded-lg border border-border/50 p-8">
-                  <div className="font-serif text-slate-800 text-sm leading-relaxed whitespace-pre-wrap">
-                    {coverLetterText}
-                  </div>
+
+                {/* Template control */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {isPaid ? (
+                    <Select value={templateId} onValueChange={setTemplateId}>
+                      <SelectTrigger className="h-8 w-[180px] text-xs">
+                        <SelectValue placeholder="Style" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TEMPLATES.map((t) => (
+                          <SelectItem key={t.id} value={t.id} className="text-xs">{t.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <button
+                      onClick={() => navigate("/#pricing")}
+                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+                      title="Upgrade to Pro to choose a cover-letter style"
+                    >
+                      <Lock className="w-3.5 h-3.5" />
+                      Classic style · <span className="text-primary font-medium">Unlock more with Pro</span>
+                    </button>
+                  )}
+                </div>
+
+                <ScrollArea className="flex-1 bg-white rounded-lg border border-border/50 p-4">
+                  <CoverLetterPreview templateId={activeTemplate} contact={contactInfo} body={coverLetterText} />
                 </ScrollArea>
               </div>
             ) : (
