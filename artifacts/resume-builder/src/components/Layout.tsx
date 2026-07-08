@@ -23,7 +23,44 @@ import logoUrl from '@assets/hiddentech_logo_1024x576_1777502981816.png';
 export default function Layout({ children }: { children: React.ReactNode }) {
   const [location, navigate] = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { user, logout } = useAuth();
+  const { user, loading: authLoading, logout } = useAuth();
+
+  // Anonymous visitors get a clean marketing layout — a slim top nav instead
+  // of the 8-item internal app sidebar (every link of which would dead-end at
+  // the sign-in wall anyway). The sidebar is reserved for signed-in users.
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col font-sans">
+        <header className="h-16 border-b border-border bg-card sticky top-0 z-40">
+          <div className="max-w-6xl mx-auto h-full px-4 md:px-8 flex items-center justify-between">
+            <Link href="/" className="flex items-center gap-3">
+              <img src={logoUrl} alt="Hidden Tech Daily" className="h-9 w-auto rounded object-contain" />
+              <div className="flex flex-col justify-center">
+                <span className="font-display font-bold text-lg leading-none">Career Craft</span>
+                <span className="text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">by Hidden Tech Daily</span>
+              </div>
+            </Link>
+            {!authLoading && (
+              <div className="flex items-center gap-2">
+                <Link href="/login">
+                  <Button variant="ghost" className="font-medium">Sign In</Button>
+                </Link>
+                <Link href="/login?mode=signup">
+                  <Button className="font-medium shadow-lg shadow-primary/20">Create Free Account</Button>
+                </Link>
+              </div>
+            )}
+          </div>
+        </header>
+        <main className="flex-1 overflow-y-auto p-4 md:p-8 relative">
+          <div className="absolute top-0 left-0 w-full h-64 bg-gradient-to-b from-primary/5 to-transparent -z-10" />
+          <div className="max-w-6xl mx-auto">
+            {children}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   const navItems = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/" },

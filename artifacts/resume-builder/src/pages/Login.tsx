@@ -4,8 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft } from "lucide-react";
-import { useAuth } from "@/lib/auth";
+import { ArrowLeft, Crown } from "lucide-react";
+import { useAuth, startCheckout } from "@/lib/auth";
 import logoUrl from '@assets/hiddentech_logo_1024x576_1777502981816.png';
 
 const OAUTH_ERROR_MESSAGES: Record<string, string> = {
@@ -14,8 +14,20 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   oauth_state: "Sign-in session expired. Please try again.",
 };
 
+const PLAN_LABELS: Record<string, string> = {
+  pro: "Pro — $20/mo",
+  lifetime: "Lifetime — $149.99 once",
+};
+
 export default function Login() {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  // Marketing CTAs link here with ?mode=signup so first-time visitors land on
+  // account creation, not a "Welcome back" sign-in wall. A bare /login (direct
+  // visits, expired-session redirects) still defaults to sign in.
+  const params = new URLSearchParams(window.location.search);
+  const selectedPlan = (["pro", "lifetime"] as const).find((p) => p === params.get("plan")) ?? null;
+  const [mode, setMode] = useState<"login" | "register">(
+    params.get("mode") === "signup" ? "register" : "login"
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -23,7 +35,7 @@ export default function Login() {
   const { login, register } = useAuth();
   const [, navigate] = useLocation();
 
-  const oauthErrorKey = new URLSearchParams(window.location.search).get("error") ?? "";
+  const oauthErrorKey = params.get("error") ?? "";
   const oauthError = OAUTH_ERROR_MESSAGES[oauthErrorKey] ?? null;
 
   async function handleSubmit(e: React.FormEvent) {
@@ -35,6 +47,16 @@ export default function Login() {
         await login(email, password);
       } else {
         await register(email, password);
+      }
+      // If the visitor arrived from a paid-plan CTA, take them straight into
+      // checkout for that plan instead of dropping them on the free dashboard.
+      if (selectedPlan) {
+        try {
+          await startCheckout(selectedPlan);
+          return; // startCheckout navigates away to Stripe
+        } catch {
+          // Checkout hiccup shouldn't strand a fresh account — fall through.
+        }
       }
       navigate("/");
     } catch (err: any) {
@@ -61,6 +83,12 @@ export default function Login() {
           <p className="text-muted-foreground">
             {mode === "login" ? "Welcome back. Please sign in to your account." : "Create your free account to get started."}
           </p>
+          {selectedPlan && (
+            <div className="mt-3 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
+              <Crown className="w-4 h-4" />
+              Selected plan: {PLAN_LABELS[selectedPlan]} — you'll go straight to checkout after this step
+            </div>
+          )}
         </div>
 
         <Card className="border-border/50 shadow-xl shadow-primary/5 bg-card/80 backdrop-blur-sm">

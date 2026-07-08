@@ -294,7 +294,9 @@ export default function Home() {
 
   async function handleCheckout(plan: "pro" | "lifetime") {
     if (!user) {
-      navigate("/login");
+      // Preserve purchase intent: land on account creation with the plan
+      // pre-selected, then go straight to checkout — not the generic sign-in.
+      navigate(`/login?mode=signup&plan=${plan}`);
       return;
     }
     setCheckoutLoading(plan);
@@ -362,28 +364,50 @@ export default function Home() {
           <div className="space-y-6">
             <div className="inline-flex items-center rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-sm font-medium text-primary">
               <Sparkles className="mr-2 h-4 w-4" />
-              Powered by Advanced AI
+              {user ? "Powered by Advanced AI" : "Free forever plan — no credit card needed"}
             </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-bold tracking-tight text-foreground leading-[1.1]">
-              Land your dream job with <span className="text-primary">AI-tailored</span> resumes.
+              Tailor your resume to <span className="text-primary">any job</span> in under 2 minutes.
             </h1>
             <p className="text-lg text-muted-foreground leading-relaxed max-w-xl">
-              Stop sending generic resumes. Career Craft analyzes job descriptions and optimizes your resume to pass ATS filters and impress recruiters.
+              Career Craft rewrites your resume around the exact keywords each job posting is scored on — so it clears the ATS and lands on a recruiter's desk instead of in a filter.
             </p>
-            <div className="flex flex-wrap gap-4 pt-2">
-              <Link href="/tailor">
-                <Button size="lg" className="gap-2 shadow-lg shadow-primary/25 h-12 px-6 text-base">
-                  <Sparkles className="w-5 h-5" />
-                  Tailor Resume Now
-                </Button>
-              </Link>
-              <Link href="/builder">
-                <Button size="lg" variant="outline" className="gap-2 h-12 px-6 text-base border-primary/20 hover:bg-primary/5 text-primary">
-                  <Plus className="w-5 h-5" />
-                  Create from Scratch
-                </Button>
-              </Link>
-            </div>
+            {user ? (
+              <div className="flex flex-wrap gap-4 pt-2">
+                <Link href="/tailor">
+                  <Button size="lg" className="gap-2 shadow-lg shadow-primary/25 h-12 px-6 text-base">
+                    <Sparkles className="w-5 h-5" />
+                    Tailor Resume Now
+                  </Button>
+                </Link>
+                <Link href="/builder">
+                  <Button size="lg" variant="outline" className="gap-2 h-12 px-6 text-base border-primary/20 hover:bg-primary/5 text-primary">
+                    <Plus className="w-5 h-5" />
+                    Create from Scratch
+                  </Button>
+                </Link>
+              </div>
+            ) : (
+              <div className="space-y-2 pt-2">
+                <div className="flex flex-wrap gap-4">
+                  <Link href="/login?mode=signup">
+                    <Button size="lg" className="gap-2 shadow-lg shadow-primary/25 h-12 px-6 text-base">
+                      <Sparkles className="w-5 h-5" />
+                      Create Your Free Account
+                    </Button>
+                  </Link>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="gap-2 h-12 px-6 text-base border-primary/20 hover:bg-primary/5 text-primary"
+                    onClick={() => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" })}
+                  >
+                    See How It Works ↓
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">Free forever. No credit card. Takes about 2 minutes.</p>
+              </div>
+            )}
           </div>
           <div className="relative rounded-2xl overflow-hidden shadow-2xl border border-primary/20 animate-float aspect-video lg:aspect-square">
             <img
@@ -407,7 +431,7 @@ export default function Home() {
         </div>
 
         {/* How It Works Section */}
-        <div className="py-8">
+        <div className="py-8 scroll-mt-8" id="how-it-works">
           <div className="text-center mb-12">
             <h2 className="text-3xl font-display font-bold mb-4">How Career Craft Works</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">Three simple steps to significantly increase your interview chances using our intelligent tailoring engine.</p>
@@ -556,8 +580,8 @@ export default function Home() {
                     {user.plan === "starter" ? "Current Plan" : "Free Tier"}
                   </Button>
                 ) : (
-                  <Link href="/login" className="w-full">
-                    <Button variant="outline" className="w-full">Get Started</Button>
+                  <Link href="/login?mode=signup" className="w-full">
+                    <Button variant="outline" className="w-full">Start Free</Button>
                   </Link>
                 )}
               </CardFooter>
@@ -599,7 +623,7 @@ export default function Home() {
                     onClick={() => handleCheckout("pro")}
                     disabled={checkoutLoading === "pro"}
                   >
-                    {checkoutLoading === "pro" ? "Loading…" : "Subscribe Now"}
+                    {checkoutLoading === "pro" ? "Loading…" : "Get Pro — $20/mo"}
                   </Button>
                 )}
               </CardFooter>
@@ -625,20 +649,26 @@ export default function Home() {
                   ))}
                 </ul>
               </CardContent>
-              <CardFooter>
+              <CardFooter className="flex-col gap-2">
                 {hasLifetime ? (
                   <Button variant="outline" className="w-full" disabled>
                     ✓ You have Lifetime Access
                   </Button>
                 ) : (
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => handleCheckout("lifetime")}
-                    disabled={checkoutLoading === "lifetime"}
-                  >
-                    {checkoutLoading === "lifetime" ? "Loading…" : "Get Lifetime Access"}
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => handleCheckout("lifetime")}
+                      disabled={checkoutLoading === "lifetime"}
+                    >
+                      {checkoutLoading === "lifetime" ? "Loading…" : "Get Lifetime — $149.99 once"}
+                    </Button>
+                    {/* 7.5 months = $149.99 / $20 per month — recalc if pricing changes */}
+                    <p className="text-xs text-muted-foreground text-center">
+                      Pays for itself in about 7.5 months vs. Pro monthly — then it's yours, forever.
+                    </p>
+                  </>
                 )}
               </CardFooter>
             </Card>
@@ -674,10 +704,10 @@ export default function Home() {
           <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-secondary/20 rounded-full blur-3xl" />
           <h2 className="text-3xl md:text-4xl font-display font-bold mb-4 relative z-10">Ready to upgrade your career?</h2>
           <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto relative z-10">Tailor your resume to each role in minutes — not hours — and apply with confidence.</p>
-          <Link href="/tailor">
+          <Link href={user ? "/tailor" : "/login?mode=signup"}>
             <Button size="lg" className="h-14 px-8 text-lg gap-2 shadow-lg shadow-primary/20 relative z-10 text-primary-foreground">
               <Sparkles className="w-5 h-5" />
-              Start Tailoring for Free
+              {user ? "Start Tailoring for Free" : "Create Your Free Account"}
             </Button>
           </Link>
         </div>
