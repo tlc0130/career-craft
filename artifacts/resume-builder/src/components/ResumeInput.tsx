@@ -16,8 +16,54 @@ interface SavedResume {
   id: string;
   title: string;
   jobTitle: string | null;
-  content: string;
+  // Saved resumes store structured ResumeContent (jsonb), not plain text.
+  content: unknown;
   updatedAt: string;
+}
+
+// Flatten a saved resume's structured content into clean plain text so it can
+// feed the tailor/cover-letter flows, which work on resume text.
+function resumeContentToText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!content || typeof content !== "object") return "";
+  const c = content as any;
+  const lines: string[] = [];
+
+  const name = [c.contact?.firstName, c.contact?.lastName].filter(Boolean).join(" ").trim();
+  if (name) lines.push(name);
+  if (c.contact?.title) lines.push(c.contact.title);
+  const contactBits = [c.contact?.email, c.contact?.phone, c.contact?.location, c.contact?.linkedin, c.contact?.website]
+    .filter(Boolean);
+  if (contactBits.length) lines.push(contactBits.join(" | "));
+
+  if (c.contact?.summary) {
+    lines.push("", "SUMMARY", c.contact.summary);
+  }
+
+  if (Array.isArray(c.experience) && c.experience.length) {
+    lines.push("", "EXPERIENCE");
+    for (const e of c.experience) {
+      const head = [e.jobTitle, e.company].filter(Boolean).join(" — ");
+      const dates = [e.startDate, e.endDate].filter(Boolean).join(" – ");
+      lines.push("", [head, dates && `(${dates})`].filter(Boolean).join("  "));
+      if (e.description) lines.push(e.description);
+    }
+  }
+
+  if (Array.isArray(c.education) && c.education.length) {
+    lines.push("", "EDUCATION");
+    for (const e of c.education) {
+      const head = [e.degree, e.school].filter(Boolean).join(", ");
+      const years = [e.startYear, e.endYear].filter(Boolean).join(" – ");
+      lines.push([head, years && `(${years})`].filter(Boolean).join("  "));
+    }
+  }
+
+  if (Array.isArray(c.skills) && c.skills.length) {
+    lines.push("", "SKILLS", c.skills.join(", "));
+  }
+
+  return lines.join("\n").trim();
 }
 
 interface ResumeInputProps {
@@ -106,8 +152,17 @@ export function ResumeInput({ value, onChange }: ResumeInputProps) {
   const clearFile = () => onChange(null);
 
   const handleSelectSavedResume = (resume: SavedResume) => {
+    const text = resumeContentToText(resume.content);
+    if (!text) {
+      toast({
+        variant: "destructive",
+        title: "Couldn't read that resume",
+        description: "This saved resume appears to be empty. Try another or paste your text.",
+      });
+      return;
+    }
     setSelectedResumeId(resume.id);
-    onChange({ mode: "text", text: resume.content });
+    onChange({ mode: "text", text });
   };
 
   const currentFile = value?.mode === "file" ? value.file : null;

@@ -4,14 +4,19 @@ import { useLocation } from "wouter";
 import { ResumeInput, ResumeInputValue } from "@/components/ResumeInput";
 import { JobPostingInput } from "@/components/JobPostingInput";
 import { DiffViewer } from "@/components/DiffViewer";
+import { ResumeTemplatePreview } from "@/components/ResumeTemplatePreview";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Sparkles, Copy, FileText, RefreshCw, GitCompare, PenLine } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ArrowRight, Sparkles, Copy, FileText, RefreshCw, GitCompare, PenLine, Lock, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useMutation } from "@tanstack/react-query";
 import { downloadResumeDocx, downloadResumePdf, buildFilename } from "@/lib/docx-export";
 import { DownloadDropdown } from "@/components/DownloadDropdown";
 import { useAuth } from "@/lib/auth";
+import { TEMPLATES } from "@/components/templates";
+import { ResumeContent } from "@/components/templates/types";
+import { printResume } from "@/lib/pdf-print";
 
 async function streamAIRequest(
   url: string,
@@ -80,10 +85,18 @@ export default function Tailor() {
   const [jobContext, setJobContext] = useState<JobContext | null>(null);
   const [originalResumeText, setOriginalResumeText] = useState("");
   const [showDiff, setShowDiff] = useState(false);
+  const [structured, setStructured] = useState<ResumeContent | null>(null);
+  const [formatting, setFormatting] = useState(false);
+  const [templateId, setTemplateId] = useState("classic");
+  const [viewMode, setViewMode] = useState<"formatted" | "text">("formatted");
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
   const [, navigate] = useLocation();
   const abortRef = useRef<AbortController | null>(null);
+
+  // Free users are locked to the basic "Classic" template; paid users choose.
+  const isPaid = !!(user && (user.plan === "pro" || user.lifetimeAccess));
+  const activeTemplate = isPaid ? templateId : "classic";
 
   useEffect(() => {
     if (!authLoading && !user) navigate("/login");
@@ -135,6 +148,8 @@ export default function Tailor() {
       });
       // Auto-save the tailored resume to the user's account (best effort).
       saveTailored(result);
+      // Format it into a clean template (falls back to plain text if parsing fails).
+      formatStructured(result);
     },
     onError: (err: Error) => {
       setStep("input");
@@ -149,11 +164,38 @@ export default function Tailor() {
   const runTailor = () => {
     setStep("processing");
     setTailoredText("");
+    setStructured(null);
+    setFormatting(false);
+    setViewMode("formatted");
     // Seed the original from pasted/saved text immediately; the server also
     // streams back the extracted original (covering file uploads) via onMeta.
     setOriginalResumeText(resumeInput?.mode === "text" ? resumeInput.text : "");
     fetchJobContext(jobDescription).then(setJobContext);
     tailorMutation.mutate();
+  };
+
+  // Turn the tailored markdown into structured content so it can render in a
+  // real resume template. Non-blocking: on failure we just show plain text.
+  const formatStructured = async (text: string) => {
+    setStructured(null);
+    setFormatting(true);
+    try {
+      const res = await fetch("/api/ai/parse-resume", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeText: text }),
+      });
+      if (!res.ok) throw new Error("format failed");
+      const data = await res.json();
+      if (data && typeof data === "object" && data.contact) {
+        setStructured(data as ResumeContent);
+      }
+    } catch {
+      setStructured(null); // fall back to plain-text view
+    } finally {
+      setFormatting(false);
+    }
   };
 
   const handleNext = () => {
@@ -227,7 +269,16 @@ export default function Tailor() {
 
   const handleDownloadPdf = () => {
     try {
-      downloadResumePdf(tailoredText, buildFilename("Tailored Resume", "pdf", jobDescription, jobContext ?? undefined));
+      // Prefer the templated PDF when we have structured content; otherwise the
+      // plain-text PDF from the raw markdown.
+      if (structured) {
+        const title = jobContext?.company && jobContext?.title
+          ? `${jobContext.title} — ${jobContext.company}`
+          : "Tailored Resume";
+        printResume(activeTemplate, structured, title);
+      } else {
+        downloadResumePdf(tailoredText, buildFilename("Tailored Resume", "pdf", jobDescription, jobContext ?? undefined));
+      }
     } catch {
       toast({ variant: "destructive", title: "Download failed", description: "Could not generate the PDF file." });
     }
@@ -365,8 +416,62 @@ export default function Tailor() {
                     )}
                   </div>
                 </div>
+
+                {/* Template + view controls */}
+                {!showDiff && structured && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex rounded-md border border-border overflow-hidden text-xs">
+                      <button
+                        onClick={() => setViewMode("formatted")}
+                        className={`px-3 py-1.5 font-medium transition-colors ${viewMode === "formatted" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                      >
+                        Formatted
+                      </button>
+                      <button
+                        onClick={() => setViewMode("text")}
+                        className={`px-3 py-1.5 font-medium transition-colors ${viewMode === "text" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                      >
+                        Plain Text
+                      </button>
+                    </div>
+
+                    {viewMode === "formatted" && (
+                      isPaid ? (
+                        <Select value={templateId} onValueChange={setTemplateId}>
+                          <SelectTrigger className="h-8 w-[180px] text-xs">
+                            <SelectValue placeholder="Template" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {TEMPLATES.map((t) => (
+                              <SelectItem key={t.id} value={t.id} className="text-xs">{t.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <button
+                          onClick={() => navigate("/#pricing")}
+                          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+                          title="Upgrade to Pro to choose from 25 templates"
+                        >
+                          <Lock className="w-3.5 h-3.5" />
+                          Classic template · <span className="text-primary font-medium">Unlock 25 with Pro</span>
+                        </button>
+                      )
+                    )}
+                  </div>
+                )}
+
                 {showDiff ? (
                   <DiffViewer original={originalResumeText} tailored={tailoredText} />
+                ) : formatting ? (
+                  <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-white rounded-lg border border-border/50 text-slate-500">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                    <p className="text-sm">Formatting your resume into a template…</p>
+                  </div>
+                ) : structured && viewMode === "formatted" ? (
+                  <ScrollArea className="flex-1 bg-white rounded-lg border border-border/50 p-4">
+                    <ResumeTemplatePreview templateId={activeTemplate} data={structured} />
+                  </ScrollArea>
                 ) : (
                   <ScrollArea className="flex-1 bg-white rounded-lg border border-border/50 p-6">
                     <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">
