@@ -106,8 +106,8 @@ export default function Login() {
                 {oauthError}
               </div>
             )}
-            {/* Google OAuth button */}
-            <a href="/api/auth/google" className="block w-full">
+            {/* Google OAuth button — carry plan intent through the OAuth round-trip */}
+            <a href={selectedPlan ? `/api/auth/google?plan=${selectedPlan}` : "/api/auth/google"} className="block w-full">
               <Button variant="outline" className="w-full flex items-center gap-2" type="button">
                 <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>

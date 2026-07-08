@@ -208,6 +208,16 @@ router.get("/auth/google", (req, res) => {
   const state = crypto.randomBytes(16).toString("hex");
   req.session.oauthState = state;
 
+  // Preserve purchase intent across the OAuth round-trip: if the visitor
+  // arrived from a paid-plan CTA, stash the plan in the session so the
+  // callback can drop them straight into checkout after signup.
+  const plan = (req.query as { plan?: string }).plan;
+  if (plan === "pro" || plan === "lifetime") {
+    req.session.oauthPlan = plan;
+  } else {
+    delete req.session.oauthPlan;
+  }
+
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: `${appUrl}/api/auth/google/callback`,
@@ -316,6 +326,15 @@ router.get("/auth/google/callback", async (req, res) => {
     req.session.userId = user.id;
     const isNewUser = !existing[0];
     logActivity({ event: "auth.google.login", userId: user.id, meta: { email: user.email, isNewUser }, statusCode: 302, req });
+
+    // If the visitor came in via a paid-plan CTA, hand them off to checkout
+    // (the frontend picks up ?checkout_plan and starts the Stripe session).
+    const oauthPlan = req.session.oauthPlan;
+    delete req.session.oauthPlan;
+    if ((oauthPlan === "pro" || oauthPlan === "lifetime") && !user.lifetimeAccess && user.plan !== oauthPlan) {
+      res.redirect(`${appUrl}/?checkout_plan=${oauthPlan}`);
+      return;
+    }
     res.redirect(`${appUrl}/`);
   } catch (err) {
     req.log.error({ err }, "Google OAuth callback error");

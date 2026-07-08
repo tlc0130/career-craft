@@ -290,6 +290,15 @@ export default function Home() {
       setCheckoutBanner({ type: "cancel" });
       window.history.replaceState({}, "", window.location.pathname);
     }
+
+    // Google OAuth carries paid-plan intent back as ?checkout_plan — kick off
+    // the Stripe checkout the visitor originally clicked toward.
+    const checkoutPlan = params.get("checkout_plan");
+    if (checkoutPlan === "pro" || checkoutPlan === "lifetime") {
+      window.history.replaceState({}, "", window.location.pathname);
+      setCheckoutLoading(checkoutPlan);
+      startCheckout(checkoutPlan).catch(() => setCheckoutLoading(null));
+    }
   }, []);
 
   async function handleCheckout(plan: "pro" | "lifetime") {
