@@ -99,6 +99,9 @@ router.post("/ai/tailor", upload.single("resume"), async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    // Disable proxy buffering (nginx) so the SSE stream isn't held/cut.
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof (res as any).flushHeaders === "function") (res as any).flushHeaders();
 
     // Emit the extracted original resume text up front so the client can render
     // an original-vs-tailored diff even when the resume was uploaded as a file.
@@ -305,6 +308,9 @@ router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    // Disable proxy buffering (nginx) so the SSE stream isn't held/cut.
+    res.setHeader("X-Accel-Buffering", "no");
+    if (typeof (res as any).flushHeaders === "function") (res as any).flushHeaders();
 
     const controller = new AbortController();
     res.on("close", () => controller.abort());
@@ -313,7 +319,7 @@ router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
     const stream = await getOpenAI().chat.completions.create(
       {
         model: getModel(),
-        max_tokens: 1500,
+        max_tokens: 2048,
         stream: true,
         messages: [
           {

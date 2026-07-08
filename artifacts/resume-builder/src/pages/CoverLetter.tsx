@@ -37,6 +37,8 @@ async function streamAIRequest(
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
+  let streamError: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -45,15 +47,24 @@ async function streamAIRequest(
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        try {
-          const payload = JSON.parse(line.slice(6));
-          if (payload.content) onChunk(payload.content);
-          if (payload.error) throw new Error(payload.error);
-        } catch {}
+      if (!line.startsWith("data: ")) continue;
+      let payload: any;
+      try {
+        payload = JSON.parse(line.slice(6));
+      } catch {
+        continue; // ignore a single unparseable line, keep streaming
       }
+      if (payload.content) onChunk(payload.content);
+      if (payload.error) streamError = payload.error;
+      if (payload.done) completed = true;
     }
   }
+
+  // Surface a mid-stream error, and don't pass off a truncated response as done:
+  // the server sends {done:true} on clean completion, so a missing marker means
+  // the connection dropped and the letter is incomplete.
+  if (streamError) throw new Error(streamError);
+  if (!completed) throw new Error("The response was cut off before it finished. Please try again.");
 }
 
 type JobContext = { company: string | null; title: string | null };

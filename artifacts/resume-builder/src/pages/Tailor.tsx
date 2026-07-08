@@ -40,6 +40,8 @@ async function streamAIRequest(
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let completed = false;
+  let streamError: string | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -48,16 +50,24 @@ async function streamAIRequest(
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        try {
-          const payload = JSON.parse(line.slice(6));
-          if (payload.content) onChunk(payload.content);
-          if (typeof payload.original === "string") onMeta?.({ original: payload.original });
-          if (payload.error) throw new Error(payload.error);
-        } catch {}
+      if (!line.startsWith("data: ")) continue;
+      let payload: any;
+      try {
+        payload = JSON.parse(line.slice(6));
+      } catch {
+        continue; // ignore a single unparseable line, keep streaming
       }
+      if (payload.content) onChunk(payload.content);
+      if (typeof payload.original === "string") onMeta?.({ original: payload.original });
+      if (payload.error) streamError = payload.error;
+      if (payload.done) completed = true;
     }
   }
+
+  // Surface mid-stream errors, and treat a missing {done:true} marker as a
+  // dropped connection rather than silently accepting a truncated result.
+  if (streamError) throw new Error(streamError);
+  if (!completed) throw new Error("The response was cut off before it finished. Please try again.");
 }
 
 type JobContext = { company: string | null; title: string | null };
