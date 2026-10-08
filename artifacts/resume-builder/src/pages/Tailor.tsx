@@ -41,13 +41,17 @@ async function streamAIRequest(
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
     for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        try {
-          const payload = JSON.parse(line.slice(6));
-          if (payload.content) onChunk(payload.content);
-          if (payload.error) throw new Error(payload.error);
-        } catch {}
+      if (!line.startsWith("data: ")) continue;
+      let payload: { content?: string; error?: string };
+      try {
+        payload = JSON.parse(line.slice(6));
+      } catch {
+        continue;
       }
+      // Surface server-side stream errors instead of silently "succeeding"
+      // with an empty or truncated result.
+      if (payload.error) throw new Error(payload.error);
+      if (payload.content) onChunk(payload.content);
     }
   }
 }
@@ -120,6 +124,7 @@ export default function Tailor() {
         controller.signal
       );
 
+      if (!result.trim()) throw new Error("The AI returned an empty response. Please try again.");
       return result;
     },
     onSuccess: () => {

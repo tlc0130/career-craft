@@ -107,7 +107,10 @@ app.use(
 );
 
 // Rate limiting: tight buckets on auth + AI, a loose backstop on everything.
-app.use("/api/auth", authLimiter);
+// Only credential endpoints: /api/auth/me returns 401 for every logged-out
+// page load, which would otherwise count as a "failed attempt" and lock
+// visitors out of logging in.
+app.use(["/api/auth/login", "/api/auth/register"], authLimiter);
 app.use("/api/ai", aiLimiter);
 app.use("/api", generalLimiter);
 

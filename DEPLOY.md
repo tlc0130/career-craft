@@ -126,12 +126,12 @@ docker compose logs -f api
 # Look for: {"port":5000,"msg":"Server listening"}
 ```
 
-### Run database migrations (first deploy only)
+### Run database migrations (first deploy, and after every update that changes `lib/db/src/schema`)
 
 ```bash
 # From the host, using the local pnpm install (Step 7):
 DATABASE_URL="postgres://careercraft:$(grep POSTGRES_PASSWORD .env | cut -d= -f2)@localhost:5432/careercraft" \
-  pnpm --filter @workspace/db run db:push
+  pnpm --filter @workspace/db run push
 ```
 
 ---
