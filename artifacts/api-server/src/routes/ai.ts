@@ -1,10 +1,10 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import OpenAI from "openai";
 import multer from "multer";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 import mammoth from "mammoth";
 import { requireAuth } from "../middlewares/auth";
-import { consumeAiCredit, getUsage } from "../lib/aiCredits";
+import { consumeAiCredit, getUsage, refundAiCredit } from "../lib/aiCredits";
 
 const router = Router();
 
@@ -36,6 +36,22 @@ function getModel(fallback = "openai/gpt-4o-mini"): string {
   return process.env["OPENROUTER_MODEL"] ?? fallback;
 }
 
+const EMPTY_RESPONSE_MESSAGE = "The AI returned an empty response. Please try again.";
+
+/**
+ * Refund a charged credit when a generation fails before any output reached
+ * the user. Client-initiated cancels are not refunded. Refund errors are
+ * logged, never surfaced: the user already gets the generation error.
+ */
+async function refundUndelivered(req: Request, charged: boolean): Promise<void> {
+  if (!charged) return;
+  try {
+    await refundAiCredit(req.session.userId!);
+  } catch (err) {
+    req.log.error({ err }, "AI credit refund failed");
+  }
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -63,6 +79,8 @@ async function extractTextFromFile(buffer: Buffer, mimeType: string, originalNam
 }
 
 router.post("/ai/tailor", upload.single("resume"), async (req, res) => {
+  let charged = false;
+  let delivered = false;
   try {
     let resumeText: string;
 
@@ -91,6 +109,7 @@ router.post("/ai/tailor", upload.single("resume"), async (req, res) => {
       res.status(credit.status).json({ error: credit.message, limitReached: credit.status === 429 });
       return;
     }
+    charged = credit.charged;
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -133,16 +152,22 @@ Return ONLY the tailored resume text, formatted cleanly with clear section heade
       if (controller.signal.aborted || res.writableEnded) break;
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
+        delivered = true;
         res.write(`data: ${JSON.stringify({ content })}\n\n`);
       }
     }
 
-    if (!res.writableEnded) {
+    if (controller.signal.aborted || res.writableEnded) return;
+    if (!delivered) {
+      await refundUndelivered(req, charged);
+      res.write(`data: ${JSON.stringify({ error: EMPTY_RESPONSE_MESSAGE })}\n\n`);
+    } else {
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-      res.end();
     }
+    res.end();
   } catch (err: any) {
     if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
+    if (!delivered) await refundUndelivered(req, charged);
     req.log.error({ err }, "AI tailor error");
     const userMessage =
       err?.status === 429
@@ -160,6 +185,8 @@ Return ONLY the tailored resume text, formatted cleanly with clear section heade
 });
 
 router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
+  let charged = false;
+  let delivered = false;
   try {
     let resumeText: string;
 
@@ -188,6 +215,7 @@ router.post("/ai/cover-letter", upload.single("resume"), async (req, res) => {
       res.status(credit.status).json({ error: credit.message, limitReached: credit.status === 429 });
       return;
     }
+    charged = credit.charged;
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -229,16 +257,22 @@ Return ONLY the cover letter body text (no address block, no date, no signature 
       if (controller.signal.aborted || res.writableEnded) break;
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
+        delivered = true;
         res.write(`data: ${JSON.stringify({ content })}\n\n`);
       }
     }
 
-    if (!res.writableEnded) {
+    if (controller.signal.aborted || res.writableEnded) return;
+    if (!delivered) {
+      await refundUndelivered(req, charged);
+      res.write(`data: ${JSON.stringify({ error: EMPTY_RESPONSE_MESSAGE })}\n\n`);
+    } else {
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-      res.end();
     }
+    res.end();
   } catch (err: any) {
     if (res.writableEnded || err?.name === "AbortError" || err?.name === "APIUserAbortError") return;
+    if (!delivered) await refundUndelivered(req, charged);
     req.log.error({ err }, "AI cover letter error");
     const userMessage =
       err?.status === 429
