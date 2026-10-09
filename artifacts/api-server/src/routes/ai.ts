@@ -152,7 +152,9 @@ Return ONLY the tailored resume text, formatted cleanly with clear section heade
       if (controller.signal.aborted || res.writableEnded) break;
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
-        delivered = true;
+        // Whitespace alone isn't a usable result (the client rejects it), so
+        // it shouldn't count as delivered for refund purposes.
+        if (content.trim()) delivered = true;
         res.write(`data: ${JSON.stringify({ content })}\n\n`);
       }
     }
@@ -257,7 +259,9 @@ Return ONLY the cover letter body text (no address block, no date, no signature 
       if (controller.signal.aborted || res.writableEnded) break;
       const content = chunk.choices[0]?.delta?.content;
       if (content) {
-        delivered = true;
+        // Whitespace alone isn't a usable result (the client rejects it), so
+        // it shouldn't count as delivered for refund purposes.
+        if (content.trim()) delivered = true;
         res.write(`data: ${JSON.stringify({ content })}\n\n`);
       }
     }
