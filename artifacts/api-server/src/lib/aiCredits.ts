@@ -1,5 +1,5 @@
 import { db, users } from "@workspace/db";
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import {
   STARTER_MONTHLY_AI_LIMIT,
   CREDIT_WINDOW_MS,
@@ -10,7 +10,9 @@ import {
 export { STARTER_MONTHLY_AI_LIMIT, decideCredit } from "./creditPolicy";
 
 export type ConsumeResult =
-  | { ok: true }
+  // `charged` is false for unlimited plans, so callers know whether there is
+  // anything to refund if the generation fails.
+  | { ok: true; charged: boolean }
   | { ok: false; status: number; message: string };
 
 /**
@@ -40,7 +42,7 @@ export async function consumeAiCredit(userId: string): Promise<ConsumeResult> {
   if (!decision.allowed) {
     return { ok: false, status: 429, message: decision.reason };
   }
-  if (decision.unlimited) return { ok: true };
+  if (decision.unlimited) return { ok: true, charged: false };
 
   // Roll the window first if it has expired, then charge atomically. The
   // conditional `used < limit` guard keeps a race from overspending.
@@ -61,7 +63,18 @@ export async function consumeAiCredit(userId: string): Promise<ConsumeResult> {
     return { ok: false, status: 429, message: creditLimitMessage() };
   }
 
-  return { ok: true };
+  return { ok: true, charged: true };
+}
+
+/**
+ * Give back a credit charged by consumeAiCredit when the generation failed
+ * before delivering any output. Never drops the counter below zero.
+ */
+export async function refundAiCredit(userId: string): Promise<void> {
+  await db
+    .update(users)
+    .set({ aiCreditsUsed: sql`${users.aiCreditsUsed} - 1` })
+    .where(and(eq(users.id, userId), gt(users.aiCreditsUsed, 0)));
 }
 
 /** Read-only usage summary for surfacing remaining credits in the UI. */
