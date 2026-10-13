@@ -229,9 +229,10 @@ The API (port 5000) is bound to `127.0.0.1` — it is **never reachable from the
 
 1. Go to https://dashboard.stripe.com/webhooks → **Add endpoint**
 2. URL: `https://craft.hiddentechdaily.com/api/stripe/webhook`
-3. Events to listen for:
-   - `checkout.session.completed`
-   - `customer.subscription.deleted`
+3. Events to listen for (all three are required):
+   - `checkout.session.completed` — grants Pro / Lifetime after payment
+   - `customer.subscription.updated` — downgrades on failed renewal (`past_due`/`unpaid`) and restores Pro when payment recovers
+   - `customer.subscription.deleted` — downgrades when a subscription ends
 4. Copy the **Signing secret** (starts with `whsec_`)
 5. Add it to `.env`:
 
