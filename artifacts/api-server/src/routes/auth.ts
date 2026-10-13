@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 
 const router = Router();
 
-const LIFETIME_FREE_EMAIL = "tlc01301@gmail.com";
+export const LIFETIME_FREE_EMAIL = "tlc01301@gmail.com";
 
 router.post("/auth/register", async (req, res) => {
   const parsed = registerSchema.safeParse(req.body);
