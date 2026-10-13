@@ -3,6 +3,7 @@ import { db, users } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getUncachableStripeClient, getStripeWebhookSecret } from "../stripeClient";
 import { requireAuth } from "../middlewares/auth";
+import { LIFETIME_FREE_EMAIL } from "./auth";
 import type Stripe from "stripe";
 
 const router = Router();
@@ -150,6 +151,8 @@ router.post("/stripe/webhook", async (req, res) => {
       event.type === "customer.subscription.deleted"
     ) {
       await handleSubscriptionChange(stripe, event.data.object as Stripe.Subscription, req.log);
+    } else if (event.type === "charge.refunded") {
+      await handleChargeRefunded(stripe, event.data.object as Stripe.Charge, req.log);
     }
 
     res.json({ received: true });
@@ -302,6 +305,48 @@ async function handleSubscriptionChange(stripe: Stripe, eventSub: Stripe.Subscri
       .set({ plan: "starter", ...(ended ? { stripeSubscriptionId: null } : { stripeSubscriptionId: sub.id }) })
       .where(eq(users.id, user.id));
   }
+}
+
+/**
+ * Revoke lifetime access when the lifetime purchase is fully refunded.
+ * Partial refunds (goodwill credits) keep access. Pro refunds need nothing
+ * here: canceling the subscription sends customer.subscription.deleted.
+ */
+async function handleChargeRefunded(stripe: Stripe, charge: Stripe.Charge, log: Log) {
+  if (!charge.refunded) {
+    log.info({ chargeId: charge.id, amountRefunded: charge.amount_refunded }, "Partial refund; access unchanged");
+    return;
+  }
+
+  const paymentIntentId = customerIdOf(charge.payment_intent);
+  if (!paymentIntentId) return;
+
+  // Only the lifetime checkout's payment revokes lifetime; invoice charges
+  // for Pro (or anything else on the account) are left alone.
+  const { data: sessions } = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 1 });
+  const session = sessions[0];
+  const isLifetimePurchase =
+    !!session &&
+    (session.metadata?.["plan"] === "lifetime" || (!session.metadata?.["plan"] && session.mode === "payment"));
+  if (!isLifetimePurchase) return;
+
+  const customerId = customerIdOf(charge.customer) ?? customerIdOf(session.customer);
+  const metaUserId = session.metadata?.["userId"] ?? session.client_reference_id ?? null;
+  let user = metaUserId ? await findUserById(metaUserId) : undefined;
+  if (!user && customerId) user = await findUserByCustomer(customerId);
+  if (!user) {
+    log.warn({ chargeId: charge.id, customerId }, "Refunded lifetime charge could not be matched to a user");
+    return;
+  }
+
+  // The owner account is granted lifetime for free and is re-granted on login.
+  if (user.email.toLowerCase() === LIFETIME_FREE_EMAIL.toLowerCase()) return;
+
+  await db
+    .update(users)
+    .set({ plan: "starter", lifetimeAccess: false })
+    .where(eq(users.id, user.id));
+  log.info({ userId: user.id, chargeId: charge.id }, "Lifetime access revoked after full refund");
 }
 
 export default router;
